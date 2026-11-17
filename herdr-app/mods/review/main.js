@@ -2,7 +2,7 @@
 // props: {folder?, base?, scope?}. Without a folder (the cmd-shift-r split) it takes the focused
 // terminal's when it starts, and keeps it; the scope and base picked are kept per folder. Scopes: Uncommitted, Branch (against its base,
 // uncommitted edits included; the header picks another base) and Commit. Left: progress, the
-// file tree with a Viewed check per file, and the commits (picking one shows just that commit).
+// file tree grouped by status (GROUPS) with a Viewed check per file, and the commits (picking one shows just that commit).
 // Right: every file's diff in one scroll; a viewed file folds to its header. Viewed marks are
 // kept in ~/.herdr/reviews/, keyed by a hash of each file's diff, so a file whose diff changes
 // comes back unviewed.
@@ -19,6 +19,13 @@ const LEFT = 260;
 const SCOPES = { uncommitted: "Uncommitted", branch: "Branch", commit: "Commit" };
 const KEEP_DAYS = 30;
 const STUCK = 45000; // a load running this long was ended by Herdr (see parsePatch)
+// The order files are listed and drawn in, by status: edits first, then what was only removed or added.
+const GROUPS = [
+  { status: "M", title: "Changed" },
+  { status: "R", title: "Renamed" },
+  { status: "D", title: "Deleted" },
+  { status: "A", title: "New" },
+];
 
 const expand = (path) => (path?.startsWith("~/") ? `${home()}${path.slice(1)}` : path);
 const basename = (path) => path.split("/").filter(Boolean).at(-1) ?? path;
@@ -175,15 +182,22 @@ export default class Review extends View {
       return;
     }
     Object.assign(this, { root, repo, scope, commit: sha, store, error: null, limited: result.limited, big: result.big, commits: list, viewed: marks });
-    this.files = tree(result.files)
+    const ordered = tree(result.files)
       .filter((r) => r.kind === "file")
       .map((r) => r.file);
+    this.files = GROUPS.flatMap((g) => ordered.filter((f) => f.status === g.status));
     this.shown = this.view();
     this.watchRoot(root, cx);
   }
 
   seen(file) {
     return Boolean(this.viewed[markKey(file)]);
+  }
+
+  // The files the progress counts and Viewed jumps through: the changed and renamed ones, or all when there are none.
+  counted() {
+    const edits = this.files.filter((f) => f.status === "M" || f.status === "R");
+    return edits.length ? edits : this.files;
   }
 
   // The rows the diff list draws and their heights, the tree, and the width the longest line needs.
@@ -214,7 +228,12 @@ export default class Review extends View {
     this.rows = rows;
     this.sizes = sizes;
     this.diffWidth = Math.max(300, Math.ceil((widest + 1) * 7.3) + 110);
-    this.treeRows = tree(this.hide ? this.files.filter((f) => !this.seen(f)) : this.files);
+    const listed = this.hide ? this.files.filter((f) => !this.seen(f)) : this.files;
+    this.treeRows = GROUPS.flatMap((g) => {
+      const files = listed.filter((f) => f.status === g.status);
+      const count = this.files.filter((f) => f.status === g.status).length;
+      return files.length ? [{ kind: "group", name: g.title, count }, ...tree(files)] : [];
+    });
   }
 
   // From a file's header (jump: on to the next unviewed file) or from its check in the tree.
@@ -227,8 +246,9 @@ export default class Review extends View {
     this.pending.set(key, at);
     this.layout();
     if (jump) {
-      const i = this.files.indexOf(file);
-      const next = on ? [...this.files.slice(i + 1), ...this.files.slice(0, i)].find((f) => !this.seen(f)) : file;
+      const list = this.counted();
+      const i = list.indexOf(file);
+      const next = on ? [...list.slice(i + 1), ...list.slice(0, i)].find((f) => !this.seen(f)) : file;
       if (next && this.index[next.path] !== undefined) this.list.scroll_to_item(this.index[next.path], "top");
     }
     this.save(cx);
@@ -425,8 +445,9 @@ export default class Review extends View {
   }
 
   progress(t) {
-    const done = this.files.filter((f) => this.seen(f)).length;
-    const total = this.files.length;
+    const counted = this.counted();
+    const done = counted.filter((f) => this.seen(f)).length;
+    const total = counted.length;
     return v_flex()
       .flex_none()
       .px(12)
@@ -475,6 +496,20 @@ export default class Review extends View {
 
   treeView(t) {
     const row = (r, i) => {
+      if (r.kind === "group")
+        return h_flex()
+          .id(`group-${r.name}`)
+          .flex_none()
+          .h(26)
+          .px(6)
+          .pt(4)
+          .items_center()
+          .justify_between()
+          .text_size(TEXT.badge)
+          .font_medium()
+          .text_color(t.dim)
+          .child(r.name.toUpperCase())
+          .child(String(r.count));
       const indent = h_flex().h(26).flex_none().gap(7).items_center().pl(6 + r.depth * 14).pr(6).rounded(6);
       if (r.kind === "dir") return indent.id(`dir-${i}`).text_color(t.muted).child(div().min_w(0).truncate().child(r.name));
       const f = r.file;
