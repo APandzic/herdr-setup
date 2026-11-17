@@ -64,6 +64,25 @@ cockpit-task add --key pr-123 --title "PR #123: Add retry" --url https://… --t
 
 `add` prints `added`, `exists` (already in the inbox) or `declined` (declined recently), so scripts can simply report everything they see each time. In the panel each task gets **Start worker** (the cockpit launches a worker with the repo's own method) and **Decline**. State lives in `~/.herdr/cockpits/<project>-<hash>/` (`cockpit-task where`), never in the project.
 
+## Updating
+
+When something new is pushed, the sidebar footer's **Update** button (↓) gets a dot and you get a notification. It checks GitHub every hour (`setup.check_every` in My Config → My Sidebar). Click it, or run:
+
+```sh
+./update.sh          # pull and install
+./update.sh --check  # just print how many commits are new
+```
+
+It pulls only when that's safe, and otherwise stops without changing anything, telling you why:
+
+| Stops when | Do this |
+|---|---|
+| The repo has uncommitted changes | Commit or stash them |
+| Something changed in the Herdr app that isn't in the repo (a setting, a layout click) | `./capture.sh`, commit what you want to keep, update again |
+| This machine has commits GitHub doesn't | Push them, then update |
+
+Skills update the moment the repo is pulled (they're symlinks); mods, layouts, settings and templates once `install.sh` has run, which `update.sh` does for you.
+
 ## Changed something in Herdr?
 
 Edits made in the app (dragging a panel, toggling a setting in My Config, editing a mod in place) land in `~/.config/herdr-app`. Copy them back and commit:
