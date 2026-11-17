@@ -1,6 +1,6 @@
 // Review: a read-only look through a repo's git changes, as a tab or beside a terminal.
 // props: {folder?, base?, scope?}. Without a folder (the cmd-shift-r split) it takes the focused
-// terminal's when it starts, and keeps it. Scopes: Uncommitted, Branch (against its base,
+// terminal's when it starts, and keeps it; the scope and base picked are kept per folder. Scopes: Uncommitted, Branch (against its base,
 // uncommitted edits included; the header picks another base) and Commit. Left: progress, the
 // file tree with a Viewed check per file, and the commits (picking one shows just that commit).
 // Right: every file's diff in one scroll; a viewed file folds to its header. Viewed marks are
@@ -44,12 +44,12 @@ export default class Review extends View {
     this.commits = [];
     this.viewed = {};
     this.pending = new Map(); // marks not saved yet: key → time, or null to unmark
-    this.scope = localStorage.getItem("scope") ?? props()?.scope;
-    this.base = localStorage.getItem("base"); // picked in the header; else props.base or the default
     this.commit = null;
     this.hide = localStorage.getItem("hide") === "1";
     if (checking()) return;
     this.origin = this.findOrigin();
+    this.scope = this.remembered("scope") ?? props()?.scope;
+    this.base = this.remembered("base"); // picked in the header; else props.base or the default
     this.refresh(cx);
     cx.timer.every(10000, (cx) => this.refresh(cx));
   }
@@ -59,27 +59,27 @@ export default class Review extends View {
     this.watch?.cancel();
   }
 
-  // props.folder, else what this copy took when it started: the focused terminal's folder, or
-  // the tab's terminal's when focus has already moved to this pane.
+  // localStorage is one per mod, not per copy: keyed by folder, so copies on other folders keep theirs.
+  remembered(name) {
+    return this.origin ? localStorage.getItem(`${name}:${this.origin.on ?? ""}:${this.origin.folder}`) : null;
+  }
+
+  remember(name, value) {
+    if (this.origin) localStorage.setItem(`${name}:${this.origin.on ?? ""}:${this.origin.folder}`, value);
+  }
+
+  // props.folder, else the focused terminal's folder when this copy starts, or the tab's
+  // terminal's when focus has already moved to this pane.
   findOrigin() {
     const p = props() ?? {};
     if (p.folder) return { folder: expand(p.folder), on: p.on ?? null };
-    try {
-      const saved = JSON.parse(localStorage.getItem("origin") ?? "null");
-      if (saved?.folder) return saved;
-    } catch {
-      // Not ours; take it again below.
-    }
     const f = focused();
     const all = panes();
     const own = all.find((x) => x.pane === f?.pane);
     const pane = own?.terminal ? own : all.find((x) => x.tab === f?.tab && x.terminal && x.cwd);
     const space = spaces().find((s) => s.active);
     const folder = pane?.cwd || f?.cwd || space?.folder;
-    if (!folder) return null;
-    const origin = { folder, on: space?.machine ?? null };
-    localStorage.setItem("origin", JSON.stringify(origin));
-    return origin;
+    return folder ? { folder, on: space?.machine ?? null } : null;
   }
 
   watchRoot(root, cx) {
@@ -265,7 +265,7 @@ export default class Review extends View {
     if (scope === this.scope) return;
     this.scope = scope;
     this.commit = null;
-    localStorage.setItem("scope", scope);
+    this.remember("scope", scope);
     this.reset(cx);
   }
 
@@ -274,7 +274,7 @@ export default class Review extends View {
     if (base === this.repo?.base) return cx.notify();
     this.base = base;
     this.commit = null;
-    localStorage.setItem("base", base);
+    this.remember("base", base);
     this.reset(cx);
   }
 
