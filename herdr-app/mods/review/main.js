@@ -14,6 +14,7 @@ import { READ, CAP, info, commits, changes, tree, hash } from "./git.js";
 const TEXT = { badge: 10, label: 11.5, small: 12, body: 13 };
 const ROW = 20;
 const HEADER = 32;
+const LIST_MAX = 10000; // sizes a virtual list takes at most
 const LEFT = 260;
 const SCOPES = { uncommitted: "Uncommitted", branch: "Branch", commit: "Commit" };
 const KEEP_DAYS = 30;
@@ -186,14 +187,17 @@ export default class Review extends View {
   }
 
   // The rows the diff list draws and their heights, the tree, and the width the longest line needs.
+  // Past LIST_MAX rows, lines go in chunks of `per`, one list item each.
   layout() {
     const rows = [];
     const sizes = [];
     let widest = 0;
     this.index = {};
-    for (const file of this.files) {
+    const shown = this.files.filter((f) => !(this.hide && this.seen(f)));
+    const total = shown.reduce((n, f) => n + (this.seen(f) ? 0 : f.rows.length + (f.note ? 1 : 0) + (f.more ? 1 : 0)), 0);
+    const per = Math.max(1, Math.ceil(total / (LIST_MAX - shown.length)));
+    for (const file of shown) {
       const seen = this.seen(file);
-      if (this.hide && seen) continue;
       this.index[file.path] = rows.length;
       rows.push({ key: `f:${file.path}`, file, seen });
       sizes.push(HEADER);
@@ -201,9 +205,9 @@ export default class Review extends View {
       const lines = file.rows.map((row, i) => ({ key: `${file.path}:${i}`, ...row }));
       if (file.note) lines.push({ key: `${file.path}:note`, kind: "note", text: file.note });
       if (file.more) lines.push({ key: `${file.path}:more`, kind: "note", text: `… ${file.more} more lines not shown` });
-      for (const line of lines) {
-        rows.push(line);
-        sizes.push(ROW);
+      for (let i = 0; i < lines.length; i += per) {
+        rows.push(per === 1 ? lines[i] : { key: `${lines[i].key}+`, lines: lines.slice(i, i + per) });
+        sizes.push(ROW * Math.min(per, lines.length - i));
       }
       widest = Math.max(widest, file.width);
     }
@@ -597,6 +601,7 @@ export default class Review extends View {
         .child(this.stat(f, t))
         .when(row.seen, (el) => el.child(div().flex_none().text_size(TEXT.label).text_color(t.dim).child("Viewed")));
     }
+    if (row.lines) return v_flex().w_full().flex_none().children(row.lines.map((l) => this.diffRow(l, t, mono)));
     const line = h_flex().w_full().h(ROW).flex_none().font_family(mono).text_size(TEXT.small);
     if (row.kind === "@") return line.px(12).bg(t.raised).text_color(t.dim).child(div().truncate().child(row.text));
     if (row.kind === "note" || row.kind === "") return line.px(12).text_color(t.dim).child(row.text);
