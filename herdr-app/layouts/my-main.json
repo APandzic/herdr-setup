@@ -36,6 +36,16 @@
           "min": 90
         },
         {
+          "id": "usage",
+          "type": "block",
+          "content": {
+            "mod": "my-usage"
+          },
+          "size": {
+            "px": 34
+          }
+        },
+        {
           "id": "sidebar-footer",
           "type": "block",
           "content": {

@@ -7,3 +7,9 @@ https://github.com/munza/herdr-mods by Tawsif Aqib, licensed under the Apache Li
 Version 2.0. Their license and NOTICE are in third_party/herdr-mods/. Changes made here:
 renamed (mod names, titles, asset and data paths), versioned separately, and further
 customized; see git history.
+
+herdr-app/mods/my-usage is written for this repository, modeled on "Over9k Usage"
+(over9k-usage) from https://github.com/herunan/herdr-over9k by the Over9k authors,
+licensed under the MIT License, which is in third_party/herdr-over9k/LICENSE: what it
+shows, its colours and its rows. It reads the limits this setup's own Claude Code status
+line saves instead of installing Over9k's.

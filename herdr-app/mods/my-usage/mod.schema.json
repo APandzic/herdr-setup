@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "My Usage mod.json",
+  "description": "What Herdr reads from My Usage's mod.json, and the settings it takes.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "This file's schema, for editors."
+    },
+    "version": {
+      "type": "string",
+      "description": "The mod's version."
+    },
+    "title": {
+      "type": "string",
+      "description": "The mod's name, as Herdr shows it."
+    },
+    "place": {
+      "enum": [
+        "left",
+        "right",
+        "top",
+        "bottom",
+        "none"
+      ],
+      "description": "Where Herdr first docks the mod. \"none\": only where a layout or another mod puts it."
+    },
+    "size": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Its first size, in pixels."
+    },
+    "focusable": {
+      "type": "boolean",
+      "description": "Lets pane.go give a shown copy the keyboard."
+    },
+    "overlay": {
+      "type": "object",
+      "description": "How mod.open shows it.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "dialog",
+            "popup",
+            "window"
+          ]
+        },
+        "width": {
+          "type": "number",
+          "minimum": 0
+        },
+        "height": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "settings": {
+      "type": "object",
+      "description": "Your changes. A setting left out uses its default.",
+      "additionalProperties": false,
+      "properties": {
+        "refresh_every": {
+          "title": "Refresh",
+          "description": "How often the usage rows read the saved limits again.",
+          "type": [
+            "string",
+            "integer"
+          ],
+          "format": "duration",
+          "pattern": "^\\s*\\d+(\\.\\d+)?\\s*(ms|s|m|h)\\s*$",
+          "default": "30s"
+        },
+        "codex": {
+          "title": "Codex",
+          "description": "Show Codex's limits too, from its newest session, when it ran in the last week.",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    }
+  }
+}

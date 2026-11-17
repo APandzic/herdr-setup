@@ -10,6 +10,7 @@ My [Herdr app](https://herdr.dev/) setup and the Claude Code skills that go with
 | `herdr-app/settings.json` | App settings (zoom, sounds, fonts). |
 | `herdr-app/mods/my-sidebar` | The sidebar: spaces with their tabs and agents, an Agents list, footer, panel toggle. Forked from Better Sidebar. |
 | `herdr-app/mods/my-config` | A settings dialog for every mod that has settings. Forked from Better Config. |
+| `herdr-app/mods/my-usage` | Claude's plan limits (5-hour, weekly) above the sidebar's footer, Codex's too when you've used it. Modeled on Over9k Usage. |
 | `herdr-app/mods/cockpit-panel` | Cockpit Panel: a read-only markdown panel per Herdr tab, filled by agents from templates. In a cockpit it also has an Inbox tab: the project's scripts (start, stop, run) and the tasks they find. |
 | `herdr-mods/cockpit-panel/templates/` | The Cockpit Panel kinds: PR review, PR summary, task ticket, ticket plan. |
 | `claude/skills/cockpit-panel` | Skill + helper script for agents to create and fill Cockpit Panel. |
@@ -65,6 +66,17 @@ cockpit-task add --key pr-123 --title "PR #123: Add retry" --url https://… --t
 
 `add` prints `added`, `exists` (already in the inbox) or `declined` (declined recently), so scripts can simply report everything they see each time. Optional `--author`, `--opened`, `--branch`, `--additions`, `--deletions`, `--files` and `--reviewers` group the inbox by author and show each PR's age, branch, size and reviewer count; reporting them again keeps them current. In the panel each task gets **Start worker** (the cockpit launches a worker with the repo's own method) and **Decline**. State lives in `~/.herdr/cockpits/<project>-<hash>/` (`cockpit-task where`), never in the project.
 
+## Usage in the sidebar
+
+My Usage shows each limit's used % (yellow from 50, red from 80) and when it resets; click a row for every limit as a bar, hover for how fresh it is. Claude Code hands its limits only to a status line, so they come from `~/.cache/claude-usage/rate-limits.json`, which the status line has to save. Mine (`~/.claude/statusline-command.sh`, not in this repo) does it with:
+
+```sh
+limits=$(echo "$input" | jq -c '.rate_limits // empty')
+[ -n "$limits" ] && mkdir -p ~/.cache/claude-usage && printf '%s\n' "$limits" > ~/.cache/claude-usage/rate-limits.json
+```
+
+Without that file the row says *No limits yet*; without a Claude login, *Not logged in*. Nothing reads a token or goes online. Refresh rate and Codex are in My Config → My Usage.
+
 ## Updating
 
 When something new is pushed, the sidebar footer's **Update** button (↓) gets a blue dot and you get a notification. A red dot means the last check failed; hover it for the reason. It checks GitHub every hour (`setup.check_every` in My Config → My Sidebar). Click it, or run:
@@ -105,4 +117,4 @@ Files Herdr writes itself (`shared.json`, `view.json`, `window.json`, `data/`, `
 
 ## License
 
-My own files are mine. `my-sidebar` and `my-config` are modified copies of Apache-2.0 mods by Tawsif Aqib; see `NOTICE` and `third_party/herdr-mods/`.
+My own files are mine. `my-sidebar` and `my-config` are modified copies of Apache-2.0 mods by Tawsif Aqib; see `NOTICE` and `third_party/herdr-mods/`. `my-usage` is modeled on the MIT-licensed Over9k Usage; see `NOTICE` and `third_party/herdr-over9k/`.
