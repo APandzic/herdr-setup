@@ -15,7 +15,17 @@ APP="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
 DATA="$HOME/.config/herdr-mods"
 cd "$REPO"
 
-git fetch --quiet origin || { echo "Couldn't reach GitHub (git fetch failed)."; exit 1; }
+# Apps like Herdr run this without your SSH agent, so an ssh remote may not authenticate.
+# Then fetch the same repo over HTTPS: anonymous for a public repo, gh's login for a private one.
+fetch() {
+  git fetch --quiet origin 2>/dev/null && return 0
+  local url; url=$(git remote get-url origin)
+  [[ "$url" =~ github\.com[:/](.+/.+)$ ]] || return 1
+  local https="https://github.com/${BASH_REMATCH[1]%.git}.git" branch; branch=$(git rev-parse --abbrev-ref @{u}); branch=${branch#origin/}
+  GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c credential.helper='!gh auth git-credential' \
+    fetch --quiet "$https" "+refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null
+}
+fetch || { echo "Couldn't reach GitHub (git fetch failed over SSH and HTTPS)."; exit 1; }
 behind=$(git rev-list --count HEAD..@{u})
 
 if [ "${1:-}" = --check ]; then echo "$behind"; exit 0; fi

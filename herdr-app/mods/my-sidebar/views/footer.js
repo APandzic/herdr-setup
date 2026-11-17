@@ -45,7 +45,9 @@ export class Footer {
   check(cx) {
     cx.spawn(async (cx) => {
       const r = await exec(`${this.repo}/update.sh`, ["--check"], { cwd: this.repo, timeout: 60000 }).catch(() => null);
-      const behind = r?.code === 0 ? Number(r.stdout.trim()) || 0 : 0;
+      // A failed check shows as one, not as "up to date".
+      this.checkError = r?.code === 0 ? null : (r?.stdout || r?.stderr || "update.sh didn't run").trim().split("\n").at(-1);
+      const behind = r?.code === 0 ? Number(r.stdout.trim()) || 0 : this.behind;
       // Tell once per new batch, not on every check.
       if (behind > this.behind)
         notify({
@@ -109,7 +111,9 @@ export class Footer {
       ? "Updating herdr-setup…"
       : this.behind
         ? `herdr-setup: ${this.behind} update${this.behind === 1 ? "" : "s"}, click to install`
-        : "herdr-setup is up to date (click to check and update)";
+        : this.checkError
+          ? `Couldn't check herdr-setup for updates: ${this.checkError}`
+          : "herdr-setup is up to date (click to check and update)";
     return h_flex()
       .id("sidebar-footer")
       .size_full()
@@ -137,6 +141,7 @@ export class Footer {
           this.button("setup-update", setupLabel, (_e, cx) => this.update(cx), t, [
             this.updating ? Icon("spinner").spin(900) : Icon("download"),
             ...(this.behind && !this.updating ? [dot()] : []),
+            ...(this.checkError && !this.behind && !this.updating ? [div().size(6).rounded_full().bg(t.blocked)] : []),
           ]),
         ),
       )
