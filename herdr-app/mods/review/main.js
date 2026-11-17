@@ -1,14 +1,15 @@
 // Review: a read-only look through a repo's git changes, as a tab or beside a terminal.
 // props: {folder?, base?, scope?}. Without a folder (the cmd-shift-r split) it takes the focused
 // terminal's when it starts, and keeps it. Scopes: Uncommitted, Branch (against its base,
-// uncommitted edits included) and Commit. Left: progress, the file tree with a Viewed check per
-// file, and the commits (picking one shows just that commit). Right: every file's diff in one
-// scroll; a viewed file folds to its header. Viewed marks are kept in ~/.herdr/reviews/, keyed
-// by a hash of each file's diff, so a file whose diff changes comes back unviewed.
+// uncommitted edits included; the header picks another base) and Commit. Left: progress, the
+// file tree with a Viewed check per file, and the commits (picking one shows just that commit).
+// Right: every file's diff in one scroll; a viewed file folds to its header. Viewed marks are
+// kept in ~/.herdr/reviews/, keyed by a hash of each file's diff, so a file whose diff changes
+// comes back unviewed.
 import { View, div } from "gpui-kit";
-import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle } from "gpui-base";
+import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, Popover } from "gpui-base";
 import { spaces, panes, focused, props, exec, readTextFile, writeTextFile, watchFolder, theme, settings, home, checking } from "herdr";
-import { READ, info, commits, changes, tree, hash } from "./git.js";
+import { READ, CAP, info, commits, changes, tree, hash } from "./git.js";
 
 const TEXT = { badge: 10, label: 11.5, small: 12, body: 13 };
 const ROW = 20;
@@ -19,6 +20,7 @@ const KEEP_DAYS = 30;
 
 const expand = (path) => (path?.startsWith("~/") ? `${home()}${path.slice(1)}` : path);
 const basename = (path) => path.split("/").filter(Boolean).at(-1) ?? path;
+const tilde = (path) => (path.startsWith(`${home()}/`) ? `~${path.slice(home().length)}` : path);
 const markKey = (file) => `${file.path}\n${file.hash}`;
 
 function parseStore(raw) {
@@ -43,6 +45,7 @@ export default class Review extends View {
     this.viewed = {};
     this.pending = new Map(); // marks not saved yet: key → time, or null to unmark
     this.scope = localStorage.getItem("scope") ?? props()?.scope;
+    this.base = localStorage.getItem("base"); // picked in the header; else props.base or the default
     this.commit = null;
     this.hide = localStorage.getItem("hide") === "1";
     if (checking()) return;
@@ -95,7 +98,8 @@ export default class Review extends View {
     });
   }
 
-  // One load at a time; a refresh asked for meanwhile runs once it's done.
+  // One load at a time; a refresh asked for meanwhile runs once it's done. Loading shows only
+  // until a view's first load ends (this.shown), so loads in the background never hide it.
   refresh(cx) {
     if (this.loading) {
       this.again = true;
@@ -103,14 +107,14 @@ export default class Review extends View {
     }
     this.loading = true;
     this.again = false;
+    const view = this.view();
     cx.spawn(async (cx) => {
       try {
         await this.load(cx);
       } catch (e) {
-        this.error = String(e?.message ?? e);
+        if (view === this.view()) this.fail("Git failed", String(e?.message ?? e));
       } finally {
         this.loading = false;
-        this.loaded = true;
         this.layout();
         cx.notify();
         if (this.again) this.refresh(cx);
@@ -119,33 +123,39 @@ export default class Review extends View {
   }
 
   view() {
-    return `${this.scope}:${this.commit ?? ""}`;
+    return `${this.scope}:${this.commit ?? ""}:${this.base ?? ""}`;
+  }
+
+  fail(title, ...lines) {
+    Object.assign(this, { error: { title, lines }, files: [], big: null, shown: this.view() });
   }
 
   async load(cx) {
     const origin = this.origin;
     if (!origin) return;
     const view = this.view();
-    const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: origin.folder, on: origin.on }).catch(() => null);
-    if (top?.code !== 0) {
+    const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: origin.folder, on: origin.on }).catch((e) => ({ code: null, stderr: String(e?.message ?? e) }));
+    if (top.code !== 0) {
+      const why = (top.stderr || top.stdout || "").trim();
       this.root = null;
-      this.files = [];
-      this.error = top ? "Not a git repository" : "Folder not found";
+      if (top.code === null) this.fail("Can't open this folder", why);
+      else if (/not a git repository/i.test(why)) this.fail("Not a git repository", "Review shows a git repository's changes; open it in a terminal inside one.", why);
+      else this.fail("Git failed", why || `git rev-parse failed (exit ${top.code})`);
       return;
     }
     const root = top.stdout.trim();
     const on = origin.on;
     const git = (args) => exec("git", [...READ, ...args], { cwd: root, on });
     const read = (path) => readTextFile(`${root}/${path}`, { on });
-    const repo = await info(git, props()?.base);
-    const scope = this.scope in SCOPES ? this.scope : repo.head && repo.base && (repo.ahead > 0 || repo.branch !== repo.base) ? "branch" : "uncommitted";
+    const repo = await info(git, props()?.base, this.base);
+    const scope = this.scope in SCOPES ? this.scope : repo.head && repo.base && (repo.ahead > 0 || repo.branch !== repo.base.replace(/^origin\//, "")) ? "branch" : "uncommitted";
 
     let list = [];
     if (scope === "branch" && repo.mergeBase) list = await commits(git, [`${repo.mergeBase}..HEAD`]);
     if (scope === "commit" && repo.head) list = await commits(git, ["-n", "30", "HEAD"]);
     let sha = list.some((c) => c.sha === this.commit) ? this.commit : null;
     if (scope === "commit") sha ??= list[0]?.sha ?? null;
-    let result = { files: [], limited: false };
+    let result = { files: [], limited: false, big: null };
     if (sha) result = await changes(git, read, { sha });
     else if (scope === "uncommitted") result = await changes(git, read, { from: repo.head });
     else if (scope === "branch" && repo.mergeBase) result = await changes(git, read, { from: repo.mergeBase });
@@ -158,10 +168,11 @@ export default class Review extends View {
       this.again = true; // the scope or commit changed meanwhile
       return;
     }
-    Object.assign(this, { root, repo, scope, commit: sha, store, error: null, limited: result.limited, commits: list, viewed: marks });
+    Object.assign(this, { root, repo, scope, commit: sha, store, error: null, limited: result.limited, big: result.big, commits: list, viewed: marks });
     this.files = tree(result.files)
       .filter((r) => r.kind === "file")
       .map((r) => r.file);
+    this.shown = this.view();
     this.watchRoot(root, cx);
   }
 
@@ -258,6 +269,15 @@ export default class Review extends View {
     this.reset(cx);
   }
 
+  pickBase(base, cx) {
+    this.picking = false;
+    if (base === this.repo?.base) return cx.notify();
+    this.base = base;
+    this.commit = null;
+    localStorage.setItem("base", base);
+    this.reset(cx);
+  }
+
   pickCommit(sha, cx) {
     if (sha === this.commit) return;
     this.commit = sha;
@@ -266,6 +286,7 @@ export default class Review extends View {
 
   reset(cx) {
     this.files = [];
+    this.big = null;
     this.commits = this.scope === "uncommitted" ? [] : this.commits;
     this.layout();
     this.list.scroll_to_item(0, "top");
@@ -299,10 +320,50 @@ export default class Review extends View {
     return { A: t.ansi2, D: t.ansi1, R: t.accent }[status] ?? t.working;
   }
 
+  // The base, and a list of the others to compare with.
+  basePicker(repo, t) {
+    const option = (base) =>
+      h_flex()
+        .id(`base-${base}`)
+        .h(26)
+        .px(8)
+        .items_center()
+        .rounded(6)
+        .cursor_pointer()
+        .when(base === repo.base, (el) => el.bg(t.selected).text_color(t.foreground))
+        .when(base !== repo.base, (el) => el.text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)))
+        .on_click((_e, cx) => this.pickBase(base, cx))
+        .child(div().truncate().child(base));
+    const trigger = h_flex()
+      .id("base-trigger")
+      .flex_none()
+      .h(22)
+      .px(6)
+      .gap(4)
+      .items_center()
+      .rounded(5)
+      .cursor_pointer()
+      .text_size(TEXT.small)
+      .text_color(t.muted)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .child(repo.base)
+      .child(div().text_size(TEXT.badge).text_color(t.dim).child("▾"));
+    return Popover.new("review-base")
+      .open(Boolean(this.picking))
+      .on_open_change((open, cx) => {
+        this.picking = open;
+        cx.notify();
+      })
+      .trigger(trigger)
+      .content(v_flex().w(220).p(5).gap(1).rounded(7).border_1().border_color(t.border).bg(t.popover).text_size(TEXT.small).children(repo.bases.map(option)));
+  }
+
   header(t) {
     const repo = this.repo;
-    const add = this.files.reduce((n, f) => n + f.add, 0);
-    const del = this.files.reduce((n, f) => n + f.del, 0);
+    const add = this.big?.add ?? this.files.reduce((n, f) => n + f.add, 0);
+    const del = this.big?.del ?? this.files.reduce((n, f) => n + f.del, 0);
+    const count = this.big?.files ?? this.files.length;
+    const folder = this.root ?? this.origin?.folder;
     const pill = (scope) => {
       const picked = this.scope === scope;
       const off = scope === "branch" ? !repo?.base : scope === "commit" ? !repo?.head : false;
@@ -336,12 +397,12 @@ export default class Review extends View {
           .when(this.scope === "branch" && Boolean(repo.base), (row) =>
             row
               .child(div().text_size(TEXT.small).text_color(t.dim).child("→"))
-              .child(div().flex_none().text_size(TEXT.small).text_color(t.muted).child(repo.base))
+              .child(this.basePicker(repo, t))
               .child(div().flex_none().text_size(TEXT.label).text_color(repo.ahead ? t.ansi2 : t.dim).child(`↑${repo.ahead}`))
               .child(div().flex_none().text_size(TEXT.label).text_color(repo.behind ? t.working : t.dim).child(`↓${repo.behind}`)),
           ),
       )
-      .child(div().flex_1())
+      .child(div().id("review-folder").flex_1().min_w(0).truncate().text_size(TEXT.label).text_color(t.dim).when(Boolean(folder), (el) => el.tooltip(folder).child(tilde(folder))))
       .child(h_flex().flex_none().p(2).gap(2).rounded(8).bg(t.raised).children(Object.keys(SCOPES).map(pill)))
       .child(
         h_flex()
@@ -350,7 +411,7 @@ export default class Review extends View {
           .text_size(TEXT.label)
           .child(div().text_color(t.ansi2).child(`+${add}`))
           .child(div().text_color(t.ansi1).child(`−${del}`))
-          .child(div().text_color(t.dim).child(`· ${this.files.length} file${this.files.length === 1 ? "" : "s"}`)),
+          .child(div().text_color(t.dim).child(`· ${count} file${count === 1 ? "" : "s"}`)),
       );
   }
 
@@ -484,7 +545,17 @@ export default class Review extends View {
       .max_h(240)
       .border_t(1)
       .border_color(t.border)
-      .child(div().flex_none().px(12).pt(10).pb(4).text_size(TEXT.badge).font_medium().text_color(t.dim).child(this.scope === "branch" ? "COMMITS" : "RECENT COMMITS"))
+      .child(
+        div()
+          .flex_none()
+          .px(12)
+          .pt(10)
+          .pb(4)
+          .text_size(TEXT.badge)
+          .font_medium()
+          .text_color(t.dim)
+          .child(this.scope !== "branch" ? "RECENT COMMITS" : this.repo.ahead > this.commits.length ? `COMMITS · LATEST ${this.commits.length} OF ${this.repo.ahead}` : "COMMITS"),
+      )
       .child(v_flex().id("review-commits").flex_1().min_h(0).px(6).pb(8).overflow_y_scrollbar().text_size(TEXT.small).children(rows));
   }
 
@@ -540,27 +611,38 @@ export default class Review extends View {
     if (file) this.toggle(file, true, cx);
   }
 
-  empty(t, title, body) {
+  empty(t, title, ...lines) {
     return v_flex()
       .flex_1()
+      .min_w(0)
       .items_center()
       .justify_center()
       .gap(6)
       .p(24)
-      .child(div().text_size(TEXT.body).text_color(t.foreground).child(title))
-      .when(Boolean(body), (el) => el.child(div().text_size(TEXT.small).text_color(t.dim).text_center().child(body)));
+      .child(div().text_size(TEXT.body).text_color(t.foreground).text_center().child(title))
+      .children(lines.filter(Boolean).map((line) => div().max_w_full().text_size(TEXT.small).text_color(t.dim).text_center().child(line)));
+  }
+
+  // A view too big to load: its counts, and what to look at instead.
+  tooBig(t) {
+    const { files, add, del } = this.big;
+    const what = `${files} files, +${add} −${del}`;
+    if (this.scope === "branch" && !this.commit) return this.empty(t, `Too big to show: ${what}`, `Against ${this.repo.base}, ${this.repo.ahead} commits. Pick another base above, or one commit on the left.`);
+    if (this.scope === "uncommitted") return this.empty(t, `Too many uncommitted changes to show: ${what}`, `Review loads up to ${CAP.changed} changed lines.`);
+    return this.empty(t, `This commit is too big to show: ${what}`, "Pick another commit on the left.");
   }
 
   diffView(t) {
     const repo = this.repo;
     if (!this.origin) return this.empty(t, "No folder", "Open Review from a terminal, or with props { folder }.");
-    if (this.error) return this.empty(t, this.error, this.origin.folder.replace(home(), "~"));
-    if (!this.loaded || (this.loading && !this.files.length)) return this.empty(t, "Loading changes…");
+    if (this.shown !== this.view()) return this.empty(t, "Loading changes…");
+    if (this.error) return this.empty(t, this.error.title, ...this.error.lines);
     if (this.scope === "branch" && !repo?.base) return this.empty(t, "No base branch", "Neither origin/HEAD, main nor master is here. Open it with: review --base <branch>");
-    if (this.scope === "branch" && repo.head && !repo.mergeBase) return this.empty(t, `No history in common with ${repo.base}`, "Open it with another base: review --base <branch>");
+    if (this.scope === "branch" && repo.head && !repo.mergeBase) return this.empty(t, `No history in common with ${repo.base}`, "Pick another base above, or open it with: review --base <branch>");
+    if (this.big) return this.tooBig(t);
     if (!this.files.length) {
-      if (this.scope === "uncommitted") return this.empty(t, "No uncommitted changes");
-      if (this.scope === "branch") return this.empty(t, `Nothing on ${repo.branch ?? "HEAD"} against ${repo.base} yet`);
+      if (this.scope === "uncommitted") return this.empty(t, "No uncommitted changes", "Try Branch or Commit above.");
+      if (this.scope === "branch") return this.empty(t, `Nothing on ${repo.branch ?? "HEAD"} against ${repo.base} yet`, "Pick another base above.");
       return this.empty(t, this.commit ? "No changes in this commit" : "No commits yet");
     }
     if (!this.rows.length) return this.empty(t, "Every file is viewed", "Turn off Hide viewed to see them again.");

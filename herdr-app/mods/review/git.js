@@ -9,10 +9,13 @@ export const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", 
 const DIFF = ["--no-color", "--no-ext-diff", "--no-textconv", "-M", "-U3", "--src-prefix=a/", "--dst-prefix=b/"];
 // git's empty tree: what a repo without commits is compared with.
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-export const CAP = { files: 1000, lines: 1500, chars: 4000 };
+// changed: added + deleted lines above which a view isn't loaded (exec returns at most 8 MiB).
+export const CAP = { files: 1000, lines: 1500, chars: 4000, changed: 100000, commits: 200 };
+// What the base picker offers, those of them that exist.
+const BASES = ["main", "master", "dev", "develop"];
 
-const out = (r) => {
-  if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
+const out = (r, args) => {
+  if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim() || `git ${args[0]} failed (exit ${r.code})`);
   return r.stdout;
 };
 const quiet = async (git, args) => {
@@ -27,31 +30,54 @@ export function hash(text) {
   return (h >>> 0).toString(16).padStart(8, "0");
 }
 
-// Where HEAD is, the base it's compared with, and how far apart they are.
-export async function info(git, base) {
+// Where HEAD is, the base it's compared with, and how far apart. The base: picked (as is), else
+// the freshest of want or origin/HEAD's branch.
+export async function info(git, want, picked) {
   const head = await quiet(git, ["rev-parse", "--verify", "-q", "HEAD"]);
   const branch = await quiet(git, ["symbolic-ref", "--short", "-q", "HEAD"]);
-  base ||= await defaultBase(git);
+  const named = want || (await defaultBase(git));
+  const kept = picked && (await quiet(git, ["rev-parse", "--verify", "-q", `${picked}^{commit}`])) ? picked : null;
+  const base = kept ?? (named && (await freshest(git, named)));
   let mergeBase = null, ahead = 0, behind = 0;
   if (head && base) {
     mergeBase = await quiet(git, ["merge-base", base, "HEAD"]);
     const counts = await quiet(git, ["rev-list", "--left-right", "--count", `${base}...HEAD`]);
     if (counts) [behind, ahead] = counts.split(/\s+/).map(Number);
   }
-  return { head, branch, base, mergeBase, ahead, behind };
+  return { head, branch, base, mergeBase, ahead, behind, bases: await bases(git, [named, base]) };
 }
 
-// origin/HEAD's branch, the local one when it exists: workers branch from the local main.
+// origin/HEAD's branch, else main or master.
 async function defaultBase(git) {
   const remote = await quiet(git, ["rev-parse", "--abbrev-ref", "origin/HEAD"]);
-  const names = remote && remote !== "origin/HEAD" ? [remote.replace(/^origin\//, ""), remote] : ["main", "master"];
-  for (const name of names) if (await quiet(git, ["rev-parse", "--verify", "-q", `${name}^{commit}`])) return name;
+  if (remote && remote !== "origin/HEAD") return remote.replace(/^origin\//, "");
+  for (const name of ["main", "master"]) if (await quiet(git, ["rev-parse", "--verify", "-q", `${name}^{commit}`])) return name;
   return null;
 }
 
-// range: ["<merge-base>..HEAD"] for a branch, ["-n", "30", "HEAD"] for recent ones.
+// A local branch only while it holds everything origin's has (workers branch from an
+// unpushed local main); a stale one would drag in every commit it's missing.
+async function freshest(git, name) {
+  const local = await quiet(git, ["rev-parse", "--verify", "-q", `refs/heads/${name}`]);
+  const remote = await quiet(git, ["rev-parse", "--verify", "-q", `refs/remotes/origin/${name}`]);
+  if (local && remote) return (await git(["merge-base", "--is-ancestor", remote, local])).code === 0 ? name : `origin/${name}`;
+  if (remote) return `origin/${name}`;
+  return (await quiet(git, ["rev-parse", "--verify", "-q", `${name}^{commit}`])) ? name : null;
+}
+
+// The picker's bases: origin's and the local ones of BASES, and the given ones.
+async function bases(git, given) {
+  const names = [...new Set([...given.filter(Boolean).map((b) => b.replace(/^origin\//, "")), ...BASES])];
+  const refs = names.flatMap((n) => [`refs/remotes/origin/${n}`, `refs/heads/${n}`]);
+  const found = ((await quiet(git, ["for-each-ref", "--format=%(refname)", ...refs])) ?? "").split("\n");
+  const list = refs.filter((r) => found.includes(r)).map((r) => r.replace(/^refs\/(heads|remotes)\//, ""));
+  for (const b of given) if (b && !list.includes(b)) list.unshift(b);
+  return list;
+}
+
+// range: ["<merge-base>..HEAD"] for a branch, ["-n", "30", "HEAD"] for recent ones. At most CAP.commits.
 export async function commits(git, range) {
-  const text = (await quiet(git, ["log", "--format=%H%x1f%h%x1f%s%x1f%at%x1e", ...range])) ?? "";
+  const text = (await quiet(git, ["log", "-n", String(CAP.commits), "--format=%H%x1f%h%x1f%s%x1f%at%x1e", ...range])) ?? "";
   return text
     .split("\x1e")
     .map((s) => s.trim())
@@ -63,18 +89,29 @@ export async function commits(git, range) {
 }
 
 // One view's files, in path order. spec: {sha} for one commit, else {from}: the work tree
-// (and untracked files) against that commit, or against nothing when it's null.
+// (and untracked files) against that commit, or against nothing when it's null. Over
+// CAP.changed lines it returns only the counts, as {big: {files, add, del}}.
 export async function changes(git, read, spec) {
-  const args = spec.sha ? ["show", "--format=", "--diff-merges=first-parent", ...DIFF, spec.sha] : ["diff", ...DIFF, spec.from ?? EMPTY_TREE];
-  const files = parsePatch(out(await git(args)));
-  let total = files.length;
-  if (!spec.sha) {
-    const paths = out(await git(["ls-files", "--others", "--exclude-standard", "-z"])).split("\0").filter(Boolean);
-    total += paths.length;
-    for (const path of paths.slice(0, Math.max(0, CAP.files - files.length))) files.push(await untracked(path, read));
+  const [cmd, ...opts] = spec.sha ? ["show", "--format=", "--diff-merges=first-parent"] : ["diff"];
+  const rev = spec.sha ?? spec.from ?? EMPTY_TREE;
+  const run = async (more) => {
+    const args = [cmd, ...opts, ...more, rev];
+    return out(await git(args), args);
+  };
+  const paths = spec.sha ? [] : out(await git(["ls-files", "--others", "--exclude-standard", "-z"]), ["ls-files"]).split("\0").filter(Boolean);
+  const big = { files: paths.length, add: 0, del: 0 };
+  for (const line of (await run(["--numstat", "--no-ext-diff", "--no-textconv", "-M"])).split("\n").filter(Boolean)) {
+    const [add, del] = line.split("\t");
+    big.files++;
+    big.add += Number(add) || 0;
+    big.del += Number(del) || 0;
   }
+  if (big.add + big.del > CAP.changed) return { files: [], limited: false, big };
+  const files = parsePatch(await run(DIFF));
+  const total = files.length + paths.length;
+  for (const path of paths.slice(0, Math.max(0, CAP.files - files.length))) files.push(await untracked(path, read));
   files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  return { files: files.slice(0, CAP.files), limited: total > CAP.files };
+  return { files: files.slice(0, CAP.files), limited: total > CAP.files, big: null };
 }
 
 // An untracked file reads as all added, as Changes shows it.

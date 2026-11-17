@@ -2,8 +2,8 @@
 # review: open a folder's git changes in Herdr's Review mod, as a new tab.
 #   review [folder] [--base <branch>] [--scope uncommitted|branch|commit]
 # folder: default the current one. --base: what Branch compares with (default: origin/HEAD's
-# branch, the local one when it exists). Run in a Herdr terminal, the tab opens in its space.
-# cmd-shift-r opens the same view beside the focused terminal instead.
+# branch; origin/<base> unless the local one holds it). Run in a Herdr terminal, the tab opens
+# in its space. cmd-shift-r opens the same view beside the focused terminal instead.
 set -euo pipefail
 
 die() { echo "review: $*" >&2; exit 1; }

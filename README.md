@@ -79,7 +79,9 @@ Open it:
 - `review [folder] [--base <branch>] [--scope uncommitted|branch|commit]`: as a new tab (default: the current folder).
 - **Review diff** in a worker's doc in the Cockpit Panel: that worker's worktree and branch, as a tab. The code cockpit points you to it before it asks whether to merge.
 
-Branch compares with `--base`, else origin's default branch (the local one when there is one), else `main` or `master`. Feedback, approving and merging go through the cockpit's chat; Review never changes the repo.
+Branch compares with `--base`, else origin's default branch, else `main` or `master`; of a branch and `origin/<it>`, it takes the local one only when it holds everything origin's has (a stale local `main` would pull in every commit it's missing). Click the base in the header to pick another (origin's and the local `main`, `master`, `dev`, `develop`); that copy of Review keeps it. The header also shows the folder Review is looking at.
+
+Review never sits on *Loading*: it says when there's nothing to show (*No uncommitted changes*), when the folder isn't a git repository, and what git said when it fails. A view over 100,000 changed lines shows only its counts; Branch lists its latest 200 commits. Feedback, approving and merging go through the cockpit's chat; Review never changes the repo.
 
 The key lives in `herdr-app/keys.add.json`. `install.sh` merges it into `~/.config/herdr-app/keys.json` (backed up first): its keys replace those same keys, everything else in the file stays as it is, and a run that has nothing to add leaves the file alone. `capture.sh` brings back only those keys' bindings, and `update.sh` stops only if you've bound one of them to something else in the app. One catch: Herdr gives a keys file its new default keys on upgrade only while nobody has edited it, and the merge is an edit, so after the first install, new default keys from a Herdr update have to be added by hand.
 
