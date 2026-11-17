@@ -1,0 +1,8 @@
+{
+  "title": "Ticket plan",
+  "description": "Plan how to implement a ticket, and the questions to settle first.",
+  "tabs": [
+    { "id": "plan", "title": "Plan" },
+    { "id": "questions", "title": "Open questions" }
+  ]
+}

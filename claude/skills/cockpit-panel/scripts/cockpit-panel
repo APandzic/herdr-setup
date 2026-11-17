@@ -1,0 +1,118 @@
+#!/bin/bash
+# cockpit-panel: make and show markdown docs for a Herdr tab's Cockpit Panel.
+#   cockpit-panel kinds                                  list template kinds
+#   cockpit-panel new <kind> <slug> <title> [--into <tab-id>] [--worker <name>]
+#                                                   create a doc from a kind and print its files; without
+#                                                   --into it goes in this tab and opens the panel here
+#   cockpit-panel open [--force] [--project <dir> --cockpit <terminal>]
+#                                                   open this tab's panel (no-op if already open); with
+#                                                   --project it also gets the Inbox tab for that cockpit,
+#                                                   replacing a plain panel that's already open
+#   cockpit-panel where                                  print this tab's docs folder
+#   cockpit-panel ids                                    print this terminal's space, tab, pane and terminal ids
+#   cockpit-panel pane                                   print the docs panel's pane id, if known
+set -euo pipefail
+
+TEMPLATES="$HOME/.config/herdr-mods/cockpit-panel/templates"
+DOCS="$HOME/.herdr/docs"
+
+die() { echo "cockpit-panel: $*" >&2; exit 1; }
+
+# This terminal's space, tab and pane, from herdr-app's own map of terminals.
+locate() {
+  [ -n "${HC_TERMINAL_ID:-}" ] || die "not running in a Herdr terminal (HC_TERMINAL_ID unset)"
+  local row
+  row=$(herdr-app ls | jq -r --arg t "$HC_TERMINAL_ID" \
+    '.spaces[] as $s | $s.tabs[] as $tab | $tab.terminals[] | select(.terminal == $t) | "\($s.id) \($tab.id) \(.pane)"' | head -1)
+  [ -n "$row" ] || die "terminal $HC_TERMINAL_ID is not in any Herdr tab"
+  read -r SPACE TAB PANE <<<"$row"
+  DIR="$DOCS/$TAB"
+}
+
+# The panel keeps $DIR/.panel while it's open (and the script writes it on opening,
+# since a panel in a tab nobody has looked at yet hasn't started). When this script opened
+# it, the file holds the panel's pane id, so other panels can split beside it.
+panel_open() { [ -e "$DIR/.panel" ]; }
+
+open_panel() {
+  local force="" project="" cockpit=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --force) force=1; shift ;;
+      --project) project=$(cd "${2:?--project needs a folder}" && pwd -P); shift 2 ;;
+      --cockpit) cockpit=${2:?--cockpit needs a terminal}; shift 2 ;;
+      "") shift ;;
+      *) die "unknown option $1" ;;
+    esac
+  done
+  mkdir -p "$DIR"
+  if panel_open; then
+    if [ -z "$force" ] && [ -z "$project" ]; then echo "panel: already open"; return; fi
+    # Replacing it: close the old one when its pane is known.
+    local old; old=$(cat "$DIR/.panel" 2>/dev/null || true)
+    if [ -n "$old" ]; then
+      herdr-app do pane.close "$(jq -nc --arg p "$old" '{pane:$p}')" >/dev/null 2>&1 || true
+      # The closing panel removes .panel as it goes; wait for that, so it can't remove the new one's.
+      for _ in $(seq 20); do [ -e "$DIR/.panel" ] || break; sleep 0.1; done
+    else
+      echo "panel: the open panel's pane is unknown; close it by hand if you now see two" >&2
+    fi
+  fi
+  herdr-app do pane.split "$(jq -nc --arg p "$PANE" --arg d "$DIR" --arg proj "$project" --arg c "$cockpit" \
+    '{direction: "right", pane: $p, mod: "cockpit-panel",
+      props: ({dir: $d} + (if $proj == "" then {} else {project: $proj, cockpit_terminal: (if $c == "" then null else $c end)} end))}')" \
+    | jq -r '.pane // empty' > "$DIR/.panel"
+  echo "panel: opened${project:+ with inbox}"
+}
+
+case "${1:-}" in
+  kinds)
+    for k in "$TEMPLATES"/*/kind.json; do
+      jq -r --arg k "$(basename "$(dirname "$k")")" '"\($k)\t\(.title)\t[\(.tabs | map(.title) | join(", "))]\t\(.description // "")"' "$k"
+    done ;;
+  where) locate; echo "$DIR" ;;
+  ids) locate; printf 'space %s\ntab %s\npane %s\nterminal %s\n' "$SPACE" "$TAB" "$PANE" "$HC_TERMINAL_ID" ;;
+  open) locate; shift; open_panel "$@" ;;
+  pane) locate; [ -s "$DIR/.panel" ] && cat "$DIR/.panel" || die "no known docs panel pane in this tab" ;;
+  new)
+    shift
+    into=${COCKPIT_PANEL_INTO:-} worker=""
+    args=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --into) into=${2:?--into needs a tab id}; shift 2 ;;
+        --worker) worker=${2:?--worker needs a name}; shift 2 ;;
+        *) args+=("$1"); shift ;;
+      esac
+    done
+    [ ${#args[@]} -eq 3 ] || die "usage: cockpit-panel new <kind> <slug> <title> [--into <tab-id>] [--worker <name>]"
+    kind=${args[0]} slug=${args[1]} title=${args[2]}
+    [[ "$slug" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "slug must be lowercase letters, digits and dashes"
+    src="$TEMPLATES/$kind"
+    [ -f "$src/kind.json" ] || die "no kind '$kind' (see: cockpit-panel kinds)"
+    if [ -n "$into" ]; then
+      [[ "$into" =~ ^[A-Za-z0-9_-]+$ ]] || die "bad tab id '$into'"
+      DIR="$DOCS/$into"
+    else
+      locate
+    fi
+    doc="$DIR/$slug"
+    [ -e "$doc" ] && die "$doc already exists; pick another slug or fill the existing one"
+    mkdir -p "$doc"
+    for id in $(jq -r '.tabs[].id' "$src/kind.json"); do
+      if [ -f "$src/$id.md" ]; then
+        T="$title" perl -pe 's/\{\{title\}\}/$ENV{T}/g' "$src/$id.md" > "$doc/$id.md"
+      else
+        printf '# %s\n' "$title" > "$doc/$id.md"
+      fi
+    done
+    # doc.json last: the panel only lists folders that have one, so it never sees a half-made doc.
+    jq --arg kind "$kind" --arg title "$title" --arg worker "$worker" --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      '{kind: $kind, title: $title, created: $created} + (if $worker == "" then {} else {worker: $worker} end)
+       + {tabs: (.tabs | map({id, title, file: "\(.id).md"}))}' \
+      "$src/kind.json" > "$doc/doc.json.tmp" && mv "$doc/doc.json.tmp" "$doc/doc.json"
+    # Into another tab: that tab's owner (the cockpit) opens its own panel.
+    [ -n "$into" ] || open_panel
+    jq -r --arg d "$doc" '.tabs[] | "\(.title)\t\($d)/\(.file)"' "$doc/doc.json" ;;
+  *) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

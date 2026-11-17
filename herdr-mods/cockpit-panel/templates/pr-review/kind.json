@@ -1,0 +1,8 @@
+{
+  "title": "PR review",
+  "description": "Review someone's pull request: what it does, then the feedback to give.",
+  "tabs": [
+    { "id": "summary", "title": "Summary" },
+    { "id": "review", "title": "Review feedback" }
+  ]
+}

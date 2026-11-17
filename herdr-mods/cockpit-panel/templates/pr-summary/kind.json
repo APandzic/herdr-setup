@@ -1,0 +1,7 @@
+{
+  "title": "PR summary",
+  "description": "Describe your own pull request, ready to paste as its description.",
+  "tabs": [
+    { "id": "summary", "title": "Summary" }
+  ]
+}

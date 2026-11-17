@@ -1,0 +1,99 @@
+#!/bin/bash
+# cockpit-task: the inbox a project's cockpit scripts put tasks into.
+#   cockpit-task add --key <key> --title <title> [--url <url>] [--task <text>] [--source <script-id>]
+#                                       prints added | exists | declined (declined less than decline_for ago)
+#   cockpit-task update --key <key> [--state new|starting|running|done|declined] [--worker <t>]
+#   cockpit-task decline --key <key>    hide it; it can come back after decline_for
+#   cockpit-task undo --key <key>       back to new
+#   cockpit-task list [--key <key>] [--state <state>]   JSON
+#   cockpit-task where                  print this project's state folder
+# The project is $COCKPIT_PROJECT, else the git root of the current folder, else the current folder.
+# Its config is <project>/.herdr/cockpit.json; inbox.decline_for (default 48h) is read from there.
+set -euo pipefail
+
+die() { echo "cockpit-task: $*" >&2; exit 1; }
+
+PROJECT=${COCKPIT_PROJECT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}
+PROJECT=$(cd "$PROJECT" && pwd -P)
+STATE=${COCKPIT_STATE:-$HOME/.herdr/cockpits/$(basename "$PROJECT")-$(printf %s "$PROJECT" | shasum | cut -c1-8)}
+INBOX="$STATE/inbox.json"
+CONFIG="$PROJECT/.herdr/cockpit.json"
+mkdir -p "$STATE"
+[ -f "$INBOX" ] || echo '{"tasks":[]}' > "$INBOX"
+
+# "450ms", "30s", "5m", "48h", "2d" → seconds
+seconds() {
+  local v=$1
+  [[ "$v" =~ ^([0-9]+)(ms|s|m|h|d)?$ ]] || { echo 172800; return; }
+  case "${BASH_REMATCH[2]}" in
+    ms) echo $(( BASH_REMATCH[1] / 1000 )) ;; s|"") echo "${BASH_REMATCH[1]}" ;;
+    m) echo $(( BASH_REMATCH[1] * 60 )) ;; h) echo $(( BASH_REMATCH[1] * 3600 )) ;; d) echo $(( BASH_REMATCH[1] * 86400 )) ;;
+  esac
+}
+decline_for() { seconds "$( [ -f "$CONFIG" ] && jq -r '.inbox.decline_for // "48h"' "$CONFIG" 2>/dev/null || echo 48h)"; }
+
+# One writer at a time: mkdir is atomic. A lock older than 30 s is from a crashed writer.
+lock() {
+  local i=0
+  until mkdir "$STATE/.lock" 2>/dev/null; do
+    if [ $(( $(date +%s) - $(stat -f %m "$STATE/.lock" 2>/dev/null || date +%s) )) -gt 30 ]; then rmdir "$STATE/.lock" 2>/dev/null || true; fi
+    i=$((i + 1)); [ $i -lt 200 ] || die "inbox is locked ($STATE/.lock)"; sleep 0.05
+  done
+  trap 'rmdir "$STATE/.lock" 2>/dev/null || true' EXIT
+}
+# write <jq filter> [jq args...]: apply the filter to the inbox atomically
+write() {
+  local filter=$1; shift
+  jq "$@" "$filter" "$INBOX" > "$INBOX.tmp" && mv "$INBOX.tmp" "$INBOX"
+}
+
+cmd=${1:-}; [ $# -gt 0 ] && shift
+key="" title="" url="" task="" source=${COCKPIT_SCRIPT:-manual} state="" worker=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --key) key=$2 ;; --title) title=$2 ;; --url) url=$2 ;; --task) task=$2 ;;
+    --source) source=$2 ;; --state) state=$2 ;; --worker) worker=$2 ;;
+    *) die "unknown option $1" ;;
+  esac
+  shift 2
+done
+now=$(date +%s)
+need_key() { [ -n "$key" ] || die "--key is required"; }
+has_key() { jq -e --arg k "$key" '.tasks | any(.key == $k)' "$INBOX" >/dev/null; }
+
+case "$cmd" in
+  add)
+    need_key; [ -n "$title" ] || die "--title is required"
+    lock
+    row=$(jq -c --arg k "$key" '.tasks[] | select(.key == $k)' "$INBOX")
+    if [ -n "$row" ]; then
+      st=$(jq -r .state <<<"$row")
+      if [ "$st" = declined ]; then
+        at=$(jq -r '.declined_at // 0' <<<"$row")
+        if [ $(( now - at )) -lt "$(decline_for)" ]; then echo declined; exit 0; fi
+        write '.tasks |= map(if .key == $k then .state = "new" | .added = $now | del(.declined_at) else . end)' --arg k "$key" --argjson now "$now"
+        echo added; exit 0
+      fi
+      echo exists; exit 0
+    fi
+    write '.tasks += [{key: $k, title: $t, url: (if $u == "" then null else $u end), task: (if $x == "" then $t else $x end),
+                      source: $s, added: $now, state: "new"}]' \
+      --arg k "$key" --arg t "$title" --arg u "$url" --arg x "$task" --arg s "$source" --argjson now "$now"
+    echo added ;;
+  update)
+    need_key; lock; has_key || die "no task $key"
+    write '.tasks |= map(if .key == $k then (if $st == "" then . else .state = $st end)
+                         | (if $w == "" then . else .worker = $w end)
+                         | (if $st == "declined" then .declined_at = $now else . end) else . end)' \
+      --arg k "$key" --arg st "$state" --arg w "$worker" --argjson now "$now" ;;
+  decline)
+    need_key; lock; has_key || die "no task $key"
+    write '.tasks |= map(if .key == $k then .state = "declined" | .declined_at = $now else . end)' --arg k "$key" --argjson now "$now" ;;
+  undo)
+    need_key; lock; has_key || die "no task $key"
+    write '.tasks |= map(if .key == $k then .state = "new" | del(.declined_at) else . end)' --arg k "$key" ;;
+  list)
+    jq --arg k "$key" --arg st "$state" '[.tasks[] | select(($k == "" or .key == $k) and ($st == "" or .state == $st))]' "$INBOX" ;;
+  where) echo "$STATE" ;;
+  *) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

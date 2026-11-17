@@ -1,0 +1,9 @@
+herdr-setup
+Copyright 2026 Andreas Pandzic
+
+herdr-app/mods/my-sidebar is a modified copy of "Better Sidebar" (v3.3.0), and
+herdr-app/mods/my-config is a modified copy of "Better Config" (v0.1.0), both from
+https://github.com/munza/herdr-mods by Tawsif Aqib, licensed under the Apache License,
+Version 2.0. Their license and NOTICE are in third_party/herdr-mods/. Changes made here:
+renamed (mod names, titles, asset and data paths), versioned separately, and further
+customized; see git history.

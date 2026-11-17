@@ -1,0 +1,8 @@
+{
+  "title": "Task ticket",
+  "description": "Write up a task as a ticket, plus working notes.",
+  "tabs": [
+    { "id": "ticket", "title": "Ticket" },
+    { "id": "notes", "title": "Notes" }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "$schema": "./mod.schema.json",
+  "version": "1.0.0",
+  "place": "none",
+  "title": "My Sidebar",
+  "settings": {
+    "git": {
+      "retry_after": 600
+    }
+  }
+}
