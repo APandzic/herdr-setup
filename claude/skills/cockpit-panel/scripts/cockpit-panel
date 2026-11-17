@@ -1,9 +1,11 @@
 #!/bin/bash
 # cockpit-panel: make and show markdown docs for a Herdr tab's Cockpit Panel.
 #   cockpit-panel kinds                                  list template kinds
-#   cockpit-panel new <kind> <slug> <title> [--into <tab-id>] [--worker <name>]
+#   cockpit-panel new <kind> <slug> <title> [--into <tab-id>] [--worker <name>] [--repo <dir> [--base <branch>]]
 #                                                   create a doc from a kind and print its files; without
-#                                                   --into it goes in this tab and opens the panel here
+#                                                   --into it goes in this tab and opens the panel here;
+#                                                   --repo gives the doc a Review diff button for that
+#                                                   checkout (a worker's worktree), against --base
 #   cockpit-panel open [--force] [--project <dir> --cockpit <terminal>]
 #                                                   open this tab's panel (no-op if already open); with
 #                                                   --project it also gets the Inbox tab for that cockpit,
@@ -83,16 +85,19 @@ case "${1:-}" in
   pane) locate; [ -s "$DIR/.panel" ] && cat "$DIR/.panel" || die "no known docs panel pane in this tab" ;;
   new)
     shift
-    into=${COCKPIT_PANEL_INTO:-} worker=""
+    into=${COCKPIT_PANEL_INTO:-} worker="" repo="" base=""
     args=()
     while [ $# -gt 0 ]; do
       case "$1" in
         --into) into=${2:?--into needs a tab id}; shift 2 ;;
         --worker) worker=${2:?--worker needs a name}; shift 2 ;;
+        --repo) repo=$(cd "${2:?--repo needs a folder}" 2>/dev/null && pwd -P) || die "no folder $2"; shift 2 ;;
+        --base) base=${2:?--base needs a branch}; shift 2 ;;
         *) args+=("$1"); shift ;;
       esac
     done
-    [ ${#args[@]} -eq 3 ] || die "usage: cockpit-panel new <kind> <slug> <title> [--into <tab-id>] [--worker <name>]"
+    [ ${#args[@]} -eq 3 ] || die "usage: cockpit-panel new <kind> <slug> <title> [--into <tab-id>] [--worker <name>] [--repo <dir> [--base <branch>]]"
+    [ -z "$base" ] || [ -n "$repo" ] || die "--base needs --repo"
     kind=${args[0]} slug=${args[1]} title=${args[2]}
     [[ "$slug" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "slug must be lowercase letters, digits and dashes"
     src="$TEMPLATES/$kind"
@@ -115,7 +120,9 @@ case "${1:-}" in
     done
     # doc.json last: the panel only lists folders that have one, so it never sees a half-made doc.
     jq --arg kind "$kind" --arg title "$title" --arg worker "$worker" --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      --arg repo "$repo" --arg base "$base" \
       '{kind: $kind, title: $title, created: $created} + (if $worker == "" then {} else {worker: $worker} end)
+       + (if $repo == "" then {} else {review: ({repo: $repo} + (if $base == "" then {} else {base: $base} end))} end)
        + {tabs: (.tabs | map({id, title, file: "\(.id).md"}))}' \
       "$src/kind.json" > "$doc/doc.json.tmp" && mv "$doc/doc.json.tmp" "$doc/doc.json"
     # Into another tab: that tab's owner (the cockpit) opens its own panel.
@@ -194,5 +201,5 @@ case "${1:-}" in
       list) jq '.decisions' "$file" ;;
       *) die "usage: cockpit-panel decision add|answer|list <slug> ..." ;;
     esac ;;
-  *) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

@@ -74,7 +74,7 @@ Existing docs keep their own copy of the tabs in `doc.json`, so editing a kind a
 
 If a cockpit's brief tells you to write a doc with `--into <tab-id>`, the doc belongs in the **cockpit's** panel, not yours:
 
-- Always pass the `--into` and `--worker` values from the brief exactly: `cockpit-panel new <kind> <slug> "<title>" --into <tab-id> --worker <name>`.
+- Always pass the `--into` and `--worker` values from the brief exactly, and `--repo`/`--base` when it has them (they give the doc a Review diff button for your worktree): `cockpit-panel new <kind> <slug> "<title>" --into <tab-id> --worker <name> [--repo <dir> --base <branch>]`.
 - `--into` never opens a panel. Don't run `cockpit-panel open` yourself; the cockpit owns its panel.
 - The content comes from the method the brief names (the repo's skill, agent or command). The template is only the format the owner reads it in.
 - Put the doc slug in your COCKPIT-SUMMARY, and end your turn with the status block the brief asks for.

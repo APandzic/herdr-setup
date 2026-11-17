@@ -9,9 +9,11 @@
 // A doc with decisions.json (cockpit-panel decision) also gets Open questions, answered here with
 // buttons that tell the cockpit (hc send "DECISION <doc> <id>: <answer>") or hand the question to
 // its chat ("DISCUSS <doc> <id>"), and Decision history.
+// A doc with `review` ({repo, base?}, from cockpit-panel new --repo) has Review diff in its bar,
+// which opens the Review mod on that checkout as a tab, until the doc is marked Merged.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
-import { exec, readTextFile, writeTextFile, watchFolder, checking, home, props, theme, panes, notify } from "herdr";
+import { exec, readTextFile, writeTextFile, watchFolder, checking, home, props, theme, panes, notify, run } from "herdr";
 import { Inbox } from "./inbox.js";
 
 const TEXT = { badge: 10, label: 11.5, small: 12, body: 13 };
@@ -125,6 +127,7 @@ export default class CockpitPanel extends View {
         worker: meta.worker ?? "",
         created: meta.created ?? "",
         handled: HANDLED[meta.handled?.state] ? meta.handled : null,
+        review: meta.review?.repo ? meta.review : null,
         folder,
         tabs,
       });
@@ -181,6 +184,28 @@ export default class CockpitPanel extends View {
       })
       .on_click((_e, cx) => (this.armed === doc.id ? this.remove(doc, cx) : this.arm(doc, cx)))
       .child(armed ? "Click again to remove" : "Remove");
+  }
+
+  reviewButton(doc, t) {
+    return div()
+      .id(`review-${doc.id}`)
+      .flex_none()
+      .ml(6)
+      .px(8)
+      .h(20)
+      .flex()
+      .items_center()
+      .rounded(5)
+      .cursor_pointer()
+      .border_1()
+      .border_color(t.border)
+      .text_size(TEXT.label)
+      .font_medium()
+      .text_color(t.foreground)
+      .hover((s) => s.bg(t.hover))
+      .tooltip(`Open ${doc.review.repo.replace(home(), "~")} in Review${doc.review.base ? ` against ${doc.review.base}` : ""}`)
+      .on_click(() => run("tab.new", { name: `Review · ${doc.worker || doc.id}`, mod: "review", props: { folder: doc.review.repo, base: doc.review.base, scope: "branch" } }))
+      .child("Review diff");
   }
 
   arm(doc, cx) {
@@ -531,6 +556,7 @@ export default class CockpitPanel extends View {
       this.bar(t)
         .children(doc.tabs.map((x) => this.pill(`tab-${x.id}`, x.title, x === tab, x !== tab && unseen(x), (cx) => this.pickTab(x.id, cx), t)))
         .child(div().flex_1())
+        .when(Boolean(doc.review) && doc.handled?.state !== "merged", (el) => el.child(this.reviewButton(doc, t)))
         .when(Boolean(doc.handled), (el) => el.child(this.handledBadge(doc, t)))
         .when(Boolean(doc.kind), (el) => el.child(div().flex_none().ml(6).text_size(TEXT.label).text_color(t.dim).child(doc.kind)))
         .child(this.removeButton(doc, t)),
