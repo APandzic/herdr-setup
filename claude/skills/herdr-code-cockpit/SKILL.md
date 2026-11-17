@@ -48,3 +48,9 @@ In COCKPIT-SUMMARY, include the branch and where the work stands: `feature/ABC-1
 
 ## Finish (ENGINE §9)
 Suggest the repo's own next step per ticket (its review, ship check or PR script). Never commit, push or open PRs unless the owner asks, even if the repo's workflow would.
+
+Once a worker's work is merged, mark its doc, right after the merge where the repo's workflow has you merge its branch, or once you learn its PR was merged:
+```bash
+~/.claude/skills/cockpit-panel/scripts/cockpit-panel handled <worker> merged --into <cockpit tab>
+```
+The doc stays in Docs as history with a Merged badge; don't delete it, the owner removes it from the panel.
