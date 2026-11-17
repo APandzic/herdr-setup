@@ -134,6 +134,12 @@ For more detail on a finished worker, read its doc in the cockpit's panel folder
 
 Nothing else. Never paste worker output or doc contents into chat. Keep it under 30 lines.
 
+**Flag your tab when you wait for the owner.** A report with decisions, a question, a worker blocked on a dialog: before ending that turn, run
+```bash
+hc label "$HC_TERMINAL_ID" attention="<why, under 60 characters, e.g. 2 decisions for frontend-612>"
+```
+The sidebar shows "Needs your attention" on your tab and clears it when the owner looks. Don't flag reports that need nothing from the owner.
+
 When the owner asks for status mid-round, run `herdr-app ls` and show the roster.
 
 ## 8. Relay decisions

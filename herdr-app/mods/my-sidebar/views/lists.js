@@ -1,8 +1,12 @@
 // Spaces and agents in one block. Combined (the default): tabs for Spaces, with
 // each space's tabs and agents under it, and Agents. With `combined: false` in the settings: the
 // two lists one above the other, as two blocks of this mod would draw them.
+// A tab whose terminals carry an `attention` label (hc label <terminal> attention="<why>", set by
+// a script, the Cockpit Panel or an agent) shows "Needs your attention" under its row until
+// the person has looked at it.
+import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, focused, theme, setAgentOrder } from "herdr";
+import { agents, focused, theme, setAgentOrder, terminals, panes, exec, run } from "herdr";
 import { Spaces } from "./spaces.js";
 import { Agents } from "./agents.js";
 import { TEXT, Badge, Rail } from "./ui.js";
@@ -17,6 +21,63 @@ export class Lists {
     this.agents.init(props, cx);
     const saved = localStorage.getItem("lists.tab");
     this.tab = TABS.includes(saved) ? saved : "spaces";
+    this.seen = null; // { tab, at }: the flagged tab on screen, and since when
+    cx.timer.every(1000, () => this.clearSeen());
+  }
+
+  // Tab id → its flags: [{ terminal, why }] from the terminals' `attention` labels.
+  attention() {
+    const tabOf = new Map(panes().filter((p) => p.terminal).map((p) => [p.terminal, p.tab]));
+    const byTab = new Map();
+    for (const term of terminals()) {
+      const why = term.labels?.attention;
+      const tab = why && tabOf.get(term.address);
+      if (tab) byTab.set(tab, [...(byTab.get(tab) ?? []), { terminal: term.address, why }]);
+    }
+    return byTab;
+  }
+
+  // Looked at: with the window in front, a flagged tab shown for 2 s has its flags cleared.
+  clearSeen() {
+    const tab = focused()?.tab;
+    const flags = tab && window.is_window_active() ? this.attention().get(tab) : null;
+    if (!flags) return void (this.seen = null);
+    if (this.seen?.tab !== tab) return void (this.seen = { tab, at: Date.now() });
+    if (Date.now() - this.seen.at < 2000) return;
+    this.seen = null;
+    for (const f of flags) exec("hc", ["label", f.terminal, "attention="]).catch(() => null);
+  }
+
+  attentionRow(w, tab, flags, t) {
+    const why = [...new Set(flags.map((f) => f.why))];
+    return h_flex()
+      .id(`attention-${tab}`)
+      .px(8)
+      .pb(4)
+      .gap(6)
+      .min_w(0)
+      .items_center()
+      .cursor_pointer()
+      .tooltip(why.join("\n"))
+      .on_click(() => {
+        run("space.select", { id: w.id });
+        run("tab.select", { id: tab });
+      })
+      .child(
+        div()
+          .flex_none()
+          .px(6)
+          .h(18)
+          .rounded(5)
+          .bg(t.blocked + "26")
+          .text_size(TEXT.avatar)
+          .font_semibold()
+          .text_color(t.blocked)
+          .flex()
+          .items_center()
+          .child("Needs your attention"),
+      )
+      .child(div().min_w(0).truncate().text_size(TEXT.label).text_color(t.dim).child(why.join(" · ")));
   }
 
   pick(tab, cx) {
@@ -70,12 +131,19 @@ export class Lists {
     // Every tab shows: a tab with agents as its agents, any other as itself.
     const shownTab = focused()?.tab;
     const plain = (tab) => !all.some((a) => a.tab === tab.id);
+    const flagged = this.attention();
     this.spaces.under = ({ w, tree, kids }) => {
       const items = w.tabs.flatMap((tab) =>
         plain(tab)
-          ? tab.settled ? [] : [{ tab }]
+          ? tab.settled && !flagged.has(tab.id) ? [] : [{ tab }]
           : all.filter((a) => a.tab === tab.id && !pins.includes(a.address)).map((a) => ({ a })),
       );
+      // The flag goes under the first row of its tab.
+      const flagAt = new Map();
+      items.forEach((x, i) => {
+        const tab = x.a ? x.a.tab : x.tab.id;
+        if (flagged.has(tab) && !flagAt.has(tab)) flagAt.set(tab, i);
+      });
       order.push(...items.filter((x) => x.a).map((x) => x.a.address));
       const before = tree ? [tree.startsWith("└") ? "" : "│"] : [];
       return items.flatMap((x, i) => {
@@ -83,6 +151,8 @@ export class Lists {
         const [row, ...subs] = x.a
           ? this.agents.agentWithSubs(x.a, i, nested, t)
           : [this.agents.tabRow(w, x.tab, x.tab.id === shownTab, t)];
+        const tab = x.a ? x.a.tab : x.tab.id;
+        if (flagAt.get(tab) === i) subs.unshift(this.attentionRow(w, tab, flagged.get(tab), t));
         return [nest([...before, last ? "└" : "├"], row), ...subs.map((s) => nest([...before, last ? "" : "│"], s))];
       });
     };
