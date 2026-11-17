@@ -14,11 +14,12 @@ import { exec, readTextFile, writeTextFile, watchFolder, checking, home, props, 
 import { Inbox } from "./inbox.js";
 
 const TEXT = { badge: 10, label: 11.5, small: 12, body: 13 };
-// doc.json `handled` (cockpit-panel handled): what was done with the doc on the forge, and its tone.
+// doc.json `handled` (cockpit-panel handled): what was done with the doc on the forge or in git, and its tone.
 const HANDLED = {
   approved: { label: "Approved", short: "Approved", tone: "done" },
   "changes-requested": { label: "Changes requested", short: "Changes", tone: "working" },
   commented: { label: "Commented", short: "Commented", tone: "muted" },
+  merged: { label: "Merged", short: "Merged", tone: "ansi5" },
 };
 const PENDING = /<!--\s*agent:[\s\S]*?-->/g;
 const COMMENT = /<!--[\s\S]*?-->/g;
@@ -176,7 +177,7 @@ export default class CockpitPanel extends View {
       .when(changed, (el) => el.child(div().size(6).rounded(3).bg(t.accent)));
   }
 
-  // "Approved", "Changes requested" or "Commented", in its tone; short for the doc list. Null when not handled.
+  // "Approved", "Changes requested", "Commented" or "Merged", in its tone; short for the doc list. Null when not handled.
   handledBadge(d, t, short = false) {
     if (!d.handled) return null;
     const h = HANDLED[d.handled.state];

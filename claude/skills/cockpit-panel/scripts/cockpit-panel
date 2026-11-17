@@ -8,7 +8,7 @@
 #                                                   open this tab's panel (no-op if already open); with
 #                                                   --project it also gets the Inbox tab for that cockpit,
 #                                                   replacing a plain panel that's already open
-#   cockpit-panel handled <slug> approved|changes-requested|commented|clear [--into <tab-id>]
+#   cockpit-panel handled <slug> approved|changes-requested|commented|merged|clear [--into <tab-id>]
 #                                                   mark a doc as acted on (the panel shows it in the doc's bar)
 #   cockpit-panel decision add <slug> <question> [--option <label>]... [--rec <n>] [--context <text>] [--into <tab-id>]
 #                                                   ask the owner in the doc's Decisions tab; prints its id (D1, D2, ...)
@@ -131,9 +131,9 @@ case "${1:-}" in
         *) args+=("$1"); shift ;;
       esac
     done
-    [ ${#args[@]} -eq 2 ] || die "usage: cockpit-panel handled <slug> approved|changes-requested|commented|clear [--into <tab-id>]"
+    [ ${#args[@]} -eq 2 ] || die "usage: cockpit-panel handled <slug> approved|changes-requested|commented|merged|clear [--into <tab-id>]"
     slug=${args[0]} state=${args[1]}
-    case "$state" in approved|changes-requested|commented|clear) ;; *) die "unknown state '$state'" ;; esac
+    case "$state" in approved|changes-requested|commented|merged|clear) ;; *) die "unknown state '$state'" ;; esac
     if [ -n "$into" ]; then
       [[ "$into" =~ ^[A-Za-z0-9_-]+$ ]] || die "bad tab id '$into'"
       DIR="$DOCS/$into"
