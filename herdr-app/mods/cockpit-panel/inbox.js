@@ -433,16 +433,12 @@ export class Inbox {
     }
     if (item.state === "declined") {
       const until = (item.declined_at ?? 0) + ms(this.declineFor(), 48 * 3600000) / 1000 - Date.now() / 1000;
-      // Closed or worked on: cockpit-task never offers it again, so there's no countdown and no Undo.
-      const closed = Boolean(item.closed_at || item.started_at || item.worker);
       return row.child(
         h_flex()
           .gap(6)
           .items_center()
-          .child(v_flex().flex_1().min_w(0).child(title.opacity(0.6)).child(this.meta(closed ? "closed" : left(until), t)))
-          .when(!closed, (el) =>
-            el.child(this.button(`undo-${item.key}`, "Undo", (cx) => this.act(["undo", "--key", item.key], cx), t, { muted: true })),
-          ),
+          .child(v_flex().flex_1().min_w(0).child(title.opacity(0.6)).child(this.meta(left(until), t)))
+          .child(this.button(`undo-${item.key}`, "Undo", (cx) => this.act(["undo", "--key", item.key], cx), t, { muted: true })),
       );
     }
     const label = { starting: "starting…", running: `running · ${item.worker ?? ""}`, done: `done · ${item.worker ?? ""}` }[item.state] ?? item.state;
@@ -548,7 +544,8 @@ export class Inbox {
 
     const fresh = this.tasks.filter((x) => x.state === "new").sort((a, b) => b.added - a.added);
     const active = this.tasks.filter((x) => ["starting", "running", "done"].includes(x.state));
-    const declined = this.tasks.filter((x) => x.state === "declined");
+    // Closed or worked on: cockpit-task never offers it again, so it leaves the panel (the record stays).
+    const declined = this.tasks.filter((x) => x.state === "declined" && !(x.closed_at || x.started_at || x.worker));
 
     if (!this.connected)
       body.child(
