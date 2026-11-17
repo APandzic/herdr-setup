@@ -23,9 +23,28 @@ The repo's way to **review a pull request or change**. Look for:
 
 Use what CLAUDE.md names. If it names several (a quick review and a full ship check), use the review one unless the owner asked for more. Name the method to the owner in one line. If the repo has no review method, ask the owner how to review, and stop until they answer.
 
+## Forge: which CLI talks to the PRs
+Pick it from where the repo is hosted (`git remote get-url origin`), unless the repo's CLAUDE.md or review method names its own:
+
+| | GitHub (`github.com`) | Bitbucket (`bitbucket.org`) |
+|---|---|---|
+| CLI | `gh` | `twg bb` (Atlassian's `twg`) |
+| who am I | `gh api user --jq .login` | `twg user get` |
+| open PRs | `gh pr list --state open --limit 30 --json number,title,url,author,isDraft` | `twg bb prs query --state OPEN --limit 30 -o json` |
+| one PR | `gh pr view <n> --json number,title,author,url,headRefName,baseRefName` | `twg bb prs get <n>` |
+| its diff | `gh pr diff <n>` | `twg bb prs diff <n>` (`diffstat` for a file list) |
+| comment | `gh pr comment <n> --body-file <file>` | `twg bb prs comment create --pull-request <n> --text <text>` |
+| approve | `gh pr review <n> --approve` | `twg bb prs approve <n>` |
+
+Another host: ask the owner which CLI to use. If the CLI is missing or not logged in (`gh auth status`, `twg env`), tell the owner and stop. Below, "the forge" means this CLI and its site.
+
 ## Intake (ENGINE §3)
 - A task is a PR number (`1234`, `#1234`) or a PR URL. Worker name: `pr-<number>`.
-- No PRs named: put the open PRs (not drafts, not the owner's own) in the inbox, newest first, and say how many are waiting:
+- No PRs named: put the open PRs (not drafts, not the owner's own) in the inbox, newest first, and say how many are waiting. List them with the forge's "open PRs", drop drafts and the owner's own, and add each one:
+  ```bash
+  cockpit-task add --key "pr-$n" --title "PR #$n: $title" --url "$url" --task "Review PR #$n by $author" --source cockpit
+  ```
+  On GitHub that is:
   ```bash
   me=$(gh api user --jq .login)
   gh pr list --state open --limit 30 --json number,title,url,author,isDraft |
@@ -36,10 +55,10 @@ Use what CLAUDE.md names. If it names several (a quick review and a full ship ch
     done
   ```
   Declined PRs stay out by themselves (`cockpit-task` skips them while they're declined).
-- Before writing the briefs, run `gh pr view <n> --json number,title,author,url,headRefName,baseRefName` for each PR, so the briefs and roster have titles. If `gh` isn't authenticated, tell the owner and stop.
+- Before writing the briefs, read each PR with the forge's "one PR", so the briefs and roster have titles, authors and branches.
 
 ## Launch (ENGINE §4)
-- Workers review only: no worktree, no branch switching. Each works in the cockpit's folder and reads the PR through `gh` (`gh pr diff`, `gh pr view`) or the method's own way, without checking it out over the shared tree. If the repo's review method needs a checkout, follow the repo's worktree convention for it.
+- Workers review only: no worktree, no branch switching. Each works in the cockpit's folder and reads the PR through the forge's CLI (put its "one PR" and "its diff" commands in the brief) or the method's own way, without checking it out over the shared tree. If the repo's review method needs a checkout, follow the repo's worktree convention for it.
 
 ## Brief (ENGINE §5): the REPORT part
 ```
@@ -49,7 +68,7 @@ Create your doc first:
 - Summary tab: fill it as soon as you've read the PR, before the review is finished.
 - Review feedback tab: fill it only when the review is done, from your method's findings, in the tab's format
   (verdict, critical issues, required changes, optional, nits, what's done well, verification story).
-Don't post the review on GitHub.
+Don't post the review on <forge>.
 Read ~/.claude/skills/cockpit-panel/SKILL.md, section "Writing for a cockpit".
 ```
 In COCKPIT-SUMMARY, include the verdict and the counts: `APPROVE · 0 critical · 1 required`.
@@ -60,4 +79,4 @@ In COCKPIT-SUMMARY, include the verdict and the counts: `APPROVE · 0 critical �
 Verdict and counts come from the worker's COCKPIT-SUMMARY, or from the Review feedback doc if the summary lacks them. Decisions are rare in reviews. Report questions for the PR author as decisions only when the owner must answer them.
 
 ## Finish (ENGINE §9)
-Suggest the next step per PR (post the review, approve, ask the author). Post on GitHub only when the owner asks, and then post exactly the doc's text.
+Suggest the next step per PR (post the review, approve, ask the author). Post on the forge only when the owner asks, with its "comment" or "approve" command, and then post exactly the doc's text.

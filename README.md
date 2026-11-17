@@ -21,7 +21,7 @@ My [Herdr app](https://herdr.dev/) setup and the Claude Code skills that go with
 
 ## Install on a machine
 
-Needs: the Herdr app (started once), `hc`, `jq`, `perl`, `rsync`; `gh` for the review cockpit.
+Needs: the Herdr app (started once), `hc`, `jq`, `perl`, `rsync`; `gh` (GitHub) or `twg` (Bitbucket) for the review cockpit.
 
 ```sh
 git clone <this repo> ~/Development/private-github/herdr-setup

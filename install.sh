@@ -18,7 +18,7 @@ BACKUP="$HOME/.herdr-setup-backups/$(date +%Y%m%d-%H%M%S)"
 missing=()
 for cmd in herdr-app hc jq perl rsync; do command -v "$cmd" >/dev/null || missing+=("$cmd"); done
 [ ${#missing[@]} -eq 0 ] || { echo "Missing: ${missing[*]}. Install them first."; exit 1; }
-command -v gh >/dev/null || echo "Note: gh isn't installed; the review cockpit needs it."
+command -v gh >/dev/null || command -v twg >/dev/null || echo "Note: neither gh nor twg is installed; the review cockpit needs one (gh for GitHub, twg for Bitbucket)."
 [ -d "$APP" ] || { echo "No $APP: start the Herdr app once first."; exit 1; }
 
 backup() { # backup <path>: keep a copy of what's about to be replaced
