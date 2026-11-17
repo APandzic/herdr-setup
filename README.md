@@ -8,16 +8,19 @@ My [Herdr app](https://herdr.dev/) setup and the Claude Code skills that go with
 |---|---|
 | `herdr-app/layouts/my-main.json` | My window layout: sidebar with Spaces / Agents tabs, tabs bar, Files and Changes panel. |
 | `herdr-app/settings.json` | App settings (zoom, sounds, fonts). |
+| `herdr-app/keys.json` | Herdr's keys, plus `cmd-shift-r` for Review. |
 | `herdr-app/mods/my-sidebar` | The sidebar: spaces with their tabs and agents, an Agents list, footer, panel toggle. Forked from Better Sidebar. |
 | `herdr-app/mods/my-config` | A settings dialog for every mod that has settings. Forked from Better Config. |
 | `herdr-app/mods/my-usage` | Claude's plan limits (5-hour, weekly) above the sidebar's footer, Codex's too when you've used it. Modeled on Over9k Usage. |
-| `herdr-app/mods/cockpit-panel` | Cockpit Panel: a read-only markdown panel per Herdr tab, filled by agents from templates. A doc's bar shows what the cockpit did with it (Approved, Merged, …) and has Remove (click twice) to delete it. In a cockpit it also has an Inbox tab: the project's scripts (start, stop, run) and the tasks they find. |
+| `herdr-app/mods/cockpit-panel` | Cockpit Panel: a read-only markdown panel per Herdr tab, filled by agents from templates. A doc's bar shows what the cockpit did with it (Approved, Merged, …), has Review diff on a worker's doc until it's merged, and Remove (click twice) to delete it. In a cockpit it also has an Inbox tab: the project's scripts (start, stop, run) and the tasks they find. |
+| `herdr-app/mods/review` | Review: a read-only look through a repo's changes (uncommitted, a branch, one commit), as a tab or beside a terminal, with a Viewed check per file. See below. |
 | `herdr-mods/cockpit-panel/templates/` | The Cockpit Panel kinds: PR review, PR summary, task ticket, ticket plan. |
 | `claude/skills/cockpit-panel` | Skill + helper script for agents to create and fill Cockpit Panel. |
 | `claude/skills/herdr-review-cockpit` | Review many PRs in parallel, each worker using the repo's own review method, results in the cockpit's panel. |
 | `claude/skills/herdr-code-cockpit` | Work many tickets in parallel, following the repo's own workflow, plans in the cockpit's panel. |
 | `claude/skills/_cockpit-engine` | Shared mechanics for both cockpits (not a skill on its own). |
 | `bin/cockpit-task` | The inbox helper scripts call to add tasks; installed to `~/.local/bin`. |
+| `bin/review` | Opens Review on a folder as a new tab; installed to `~/.local/bin`. |
 | `bin/cockpit-rules` | Tells a running cockpit when its rule files changed (a Claude Code prompt hook); installed to `~/.local/bin`. |
 | `examples/github-new-prs.sh` | Example watcher: puts open PRs (not yours, not drafts) into the inbox. |
 
@@ -66,6 +69,20 @@ cockpit-task add --key pr-123 --title "PR #123: Add retry" --url https://… --t
 
 `add` prints `added`, `exists` (already in the inbox) or `declined` (declined recently), so scripts can simply report everything they see each time. Optional `--author`, `--opened`, `--branch`, `--additions`, `--deletions`, `--files` and `--reviewers` group the inbox by author and show each PR's age, branch, size and reviewer count; reporting them again keeps them current. In the panel each task gets **Start worker** (the cockpit launches a worker with the repo's own method) and **Decline**. A task is closed for good, and leaves the panel, when the review cockpit sees its PR approved, when you Clear its finished worker, or when a watcher runs `cockpit-task close` on it (my Bitbucket watcher does for merged, declined or approved PRs); Declined lists only what you declined yourself. State lives in `~/.herdr/cockpits/<project>-<hash>/` (`cockpit-task where`), never in the project.
 
+## Reviewing changes
+
+Review shows a repo's changes, read-only: pick **Uncommitted**, **Branch** (against its base, uncommitted edits included) or **Commit** at the top. On the left are the files as a tree, each with a **Viewed** check, a bar of how many you've viewed (**Hide viewed** hides them), and the commits: under Branch the branch's own (pick one to see just it, or All), under Commit the last 30. On the right is every file's diff in one scroll; click a file's header to mark it viewed, which folds it and jumps to the next one. A check clears by itself when that file's diff changes. Checks are kept in `~/.herdr/reviews/` for 30 days. It refreshes when files in the repo change.
+
+Open it:
+
+- `cmd-shift-r` in a terminal: beside it, for that terminal's folder.
+- `review [folder] [--base <branch>] [--scope uncommitted|branch|commit]`: as a new tab (default: the current folder).
+- **Review diff** in a worker's doc in the Cockpit Panel: that worker's worktree and branch, as a tab. The code cockpit points you to it before it asks whether to merge.
+
+Branch compares with `--base`, else origin's default branch (the local one when there is one), else `main` or `master`. Feedback, approving and merging go through the cockpit's chat; Review never changes the repo.
+
+The key lives in `herdr-app/keys.json`, which `install.sh` copies over Herdr's own. Herdr adds its new default keys on upgrade only to a keys file nobody has changed, so from now on a new default key has to be added to this one by hand.
+
 ## Usage in the sidebar
 
 My Usage shows a row per service: its logo (the program's icon from Herdr's program table, as the sidebar's agents have), then one line per limit (5-hour above 7-day), each with a bar and its used % (yellow from 50, red from 80) and the time until it resets. Click a row for the plan, the clock time each limit resets and when the numbers were saved; hover for a summary of the row. Claude Code hands its limits only to a status line, so they come from `~/.cache/claude-usage/rate-limits.json`, which the status line has to save. Mine (`~/.claude/statusline-command.sh`, not in this repo) does it with:
@@ -113,7 +130,7 @@ Skills are symlinks, so edits to them are already in the repo.
 
 ## Not in here, on purpose
 
-Files Herdr writes itself (`shared.json`, `view.json`, `window.json`, `data/`, `layouts/.state/`, `frame/`), Herdr's shipped mods and layouts, `~/.claude/skills/synced/` (managed by Claude), and the docs agents write (`~/.herdr/docs/`, tied to one machine's tabs).
+Files Herdr writes itself (`shared.json`, `view.json`, `window.json`, `data/`, `layouts/.state/`, `frame/`), Herdr's shipped mods and layouts, `~/.claude/skills/synced/` (managed by Claude), the docs agents write (`~/.herdr/docs/`, tied to one machine's tabs) and Review's Viewed checks (`~/.herdr/reviews/`).
 
 ## License
 
