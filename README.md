@@ -66,7 +66,7 @@ cockpit-task add --key pr-123 --title "PR #123: Add retry" --url https://… --t
 
 ## Updating
 
-When something new is pushed, the sidebar footer's **Update** button (↓) gets a dot and you get a notification. It checks GitHub every hour (`setup.check_every` in My Config → My Sidebar). Click it, or run:
+When something new is pushed, the sidebar footer's **Update** button (↓) gets a blue dot and you get a notification. A red dot means the last check failed; hover it for the reason. It checks GitHub every hour (`setup.check_every` in My Config → My Sidebar). Click it, or run:
 
 ```sh
 ./update.sh          # pull and install
