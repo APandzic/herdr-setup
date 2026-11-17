@@ -73,7 +73,7 @@ herdr-app do tab.new "$(jq -nc --arg s "<space>" --arg n "<name>" --arg f "<cwd>
 
 Add `args` as extra `argv` entries after `"auto"`. The result is `{space, tab, terminal}`: keep `tab` and `terminal` (e.g. `t12`) in the roster. Always target workers by terminal address, never by focus or sidebar order.
 
-If the repo's method needs a worktree, create it as CLAUDE.md describes before launching, and pass its path as `folder`.
+If the repo's method needs a worktree, create it as CLAUDE.md describes before launching, and pass its path as `folder`. Add `--repo <worktree path> --base <the branch it was made from>` to the worker's `cockpit-panel new` line in the brief: its doc then gets a **Review diff** button, which opens that branch's changes in Herdr's Review mod.
 
 Then wait for each worker in the background (Bash `run_in_background`, with a timeout of at least 3700 s), so all run concurrently and you're re-invoked as each one settles:
 

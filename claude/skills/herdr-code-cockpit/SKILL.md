@@ -30,11 +30,13 @@ Name the method to the owner in one line, e.g. `Method: CLAUDE.md workflow — s
 ## Launch (ENGINE §4)
 Branches, worktrees, local setup (env files, dependencies, local stacks) and ticket state changes happen exactly as the repo's workflow says, whether the cockpit does them before launch (for example creating the worktree) or the worker does them as its first step (for example the repo's start script). Put which one in the brief.
 
+When you create a worker's worktree, its `cockpit-panel new` line in the brief gets `--repo <worktree> --base <branch it was made from>` (ENGINE §4), so the doc has a **Review diff** button.
+
 ## Brief (ENGINE §5): the REPORT part
 ```
 REPORT
 Create your doc first:
-  ~/.claude/skills/cockpit-panel/scripts/cockpit-panel new ticket-plan <name> "<KEY>: <title>" --into <cockpit tab> --worker <name>
+  ~/.claude/skills/cockpit-panel/scripts/cockpit-panel new ticket-plan <name> "<KEY>: <title>" --into <cockpit tab> --worker <name> [--repo <worktree> --base <branch>]
 - Plan tab: fill it from the repo's own planning step before writing code. If the repo's workflow says a plan
   needs approval, stop there with COCKPIT-STATUS: needs-decision and ask for it.
 - Open questions tab: anything that blocks or shapes the work, with your recommendation. Mark answered ones ✅.
@@ -48,6 +50,8 @@ In COCKPIT-SUMMARY, include the branch and where the work stands: `feature/ABC-1
 
 ## Finish (ENGINE §9)
 Suggest the repo's own next step per ticket (its review, ship check or PR script). Never commit, push or open PRs unless the owner asks, even if the repo's workflow would.
+
+When you ask the owner whether to merge a worker's branch, point them to the **Review diff** button in its doc's bar (it opens the branch, uncommitted edits included, in a Review tab). Review is read-only: their feedback, approval and the merge itself still come to you in chat, and you act on them as usual.
 
 Once a worker's work is merged, mark its doc, right after the merge where the repo's workflow has you merge its branch, or once you learn its PR was merged:
 ```bash
