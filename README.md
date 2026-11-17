@@ -64,7 +64,7 @@ A script reports work with `cockpit-task`, so it can be written in anything:
 cockpit-task add --key pr-123 --title "PR #123: Add retry" --url https://… --task "Review PR #123"
 ```
 
-`add` prints `added`, `exists` (already in the inbox) or `declined` (declined recently), so scripts can simply report everything they see each time. Optional `--author`, `--opened`, `--branch`, `--additions`, `--deletions`, `--files` and `--reviewers` group the inbox by author and show each PR's age, branch, size and reviewer count; reporting them again keeps them current. In the panel each task gets **Start worker** (the cockpit launches a worker with the repo's own method) and **Decline**. State lives in `~/.herdr/cockpits/<project>-<hash>/` (`cockpit-task where`), never in the project.
+`add` prints `added`, `exists` (already in the inbox) or `declined` (declined recently), so scripts can simply report everything they see each time. Optional `--author`, `--opened`, `--branch`, `--additions`, `--deletions`, `--files` and `--reviewers` group the inbox by author and show each PR's age, branch, size and reviewer count; reporting them again keeps them current. In the panel each task gets **Start worker** (the cockpit launches a worker with the repo's own method) and **Decline**. A task is closed for good, and leaves the panel, when the review cockpit sees its PR approved, when you Clear its finished worker, or when a watcher runs `cockpit-task close` on it (my Bitbucket watcher does for merged, declined or approved PRs); Declined lists only what you declined yourself. State lives in `~/.herdr/cockpits/<project>-<hash>/` (`cockpit-task where`), never in the project.
 
 ## Usage in the sidebar
 
