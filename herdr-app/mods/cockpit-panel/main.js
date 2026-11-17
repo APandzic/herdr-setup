@@ -1,6 +1,6 @@
 // Cockpit Panel: the markdown docs an agent writes for one Herdr tab, read-only.
 // props().dir is that tab's folder, ~/.herdr/docs/<tab-id>/. Each doc in it is a
-// folder with doc.json ({kind, title, created, tabs: [{id, title, file}]}) and one
+// folder with doc.json ({kind, title, created, handled?, tabs: [{id, title, file}]}) and one
 // .md per tab. A row of docs (when there's more than one), a row of the doc's tabs,
 // then the chosen tab rendered. Rereads when anything under the folder changes.
 // Opened for a cockpit (props project and cockpit_terminal too), it has two top tabs:
@@ -10,7 +10,13 @@ import { v_flex, h_flex, TextView } from "gpui-base";
 import { exec, readTextFile, watchFolder, checking, home, props, theme, panes } from "herdr";
 import { Inbox } from "./inbox.js";
 
-const TEXT = { label: 11.5, small: 12, body: 13 };
+const TEXT = { badge: 10, label: 11.5, small: 12, body: 13 };
+// doc.json `handled` (cockpit-panel handled): what was done with the doc on the forge, and its tone.
+const HANDLED = {
+  approved: { label: "Approved", short: "Approved", tone: "done" },
+  "changes-requested": { label: "Changes requested", short: "Changes", tone: "working" },
+  commented: { label: "Commented", short: "Commented", tone: "muted" },
+};
 const PENDING = /<!--\s*agent:[\s\S]*?-->/g;
 const COMMENT = /<!--[\s\S]*?-->/g;
 
@@ -91,7 +97,16 @@ export default class CockpitPanel extends View {
         const text = (await readTextFile(path).catch(() => null)) ?? "";
         tabs.push({ id: tab.id, title: tab.title ?? tab.id, path, text });
       }
-      docs.push({ id: name, title: meta.title ?? name, kind: meta.kind ?? "", worker: meta.worker ?? "", created: meta.created ?? "", folder, tabs });
+      docs.push({
+        id: name,
+        title: meta.title ?? name,
+        kind: meta.kind ?? "",
+        worker: meta.worker ?? "",
+        created: meta.created ?? "",
+        handled: HANDLED[meta.handled?.state] ? meta.handled : null,
+        folder,
+        tabs,
+      });
     }
     docs.sort((a, b) => String(b.created).localeCompare(String(a.created)));
     // First load: what's there counts as seen, so only later writes get a dot.
@@ -140,6 +155,31 @@ export default class CockpitPanel extends View {
       .on_click((_e, cx) => onClick(cx))
       .child(label)
       .when(changed, (el) => el.child(div().size(6).rounded(3).bg(t.accent)));
+  }
+
+  // "Approved", "Changes requested" or "Commented", in its tone; short for the doc list. Null when not handled.
+  handledBadge(d, t, short = false) {
+    if (!d.handled) return null;
+    const h = HANDLED[d.handled.state];
+    const color = t[h.tone] ?? t.muted;
+    const at = d.handled.at ? new Date(d.handled.at) : null;
+    const pad = (n) => String(n).padStart(2, "0");
+    const day = at && at.toDateString() !== new Date().toDateString() ? `${at.getDate()}/${at.getMonth() + 1} ` : "";
+    const when = at && !Number.isNaN(at.getTime()) ? ` · ${day}${pad(at.getHours())}:${pad(at.getMinutes())}` : "";
+    return div()
+      .id(`handled-${d.id}${short ? "-short" : ""}`)
+      .flex_none()
+      .px(6)
+      .h(18)
+      .flex()
+      .items_center()
+      .rounded(5)
+      .bg(`${color}26`)
+      .text_size(TEXT.badge)
+      .font_semibold()
+      .text_color(color)
+      .tooltip(`${h.label}${when}`)
+      .child(short ? h.short : h.label);
   }
 
   bar(t) {
@@ -193,7 +233,14 @@ export default class CockpitPanel extends View {
                 .child(d.worker || d.id),
             )
             .when(!picked && d.tabs.some(unseen), (el) => el.child(div().flex_none().size(6).rounded(3).bg(t.accent)))
-            .child(div().flex_none().text_size(TEXT.label).text_color(t.dim).child(d.tabs.map((x) => this.progress(x)).join(""))),
+            // Narrow: a dot in the handled tone; wide: the short badge in place of the progress marks.
+            .when(Boolean(d.handled) && narrow, (el) =>
+              el.child(div().flex_none().size(6).rounded(3).bg(t[HANDLED[d.handled.state].tone] ?? t.muted)),
+            )
+            .when(Boolean(d.handled) && !narrow, (el) => el.child(this.handledBadge(d, t, true)))
+            .when(!d.handled, (el) =>
+              el.child(div().flex_none().text_size(TEXT.label).text_color(t.dim).child(d.tabs.map((x) => this.progress(x)).join(""))),
+            ),
         )
         .when(!narrow, (el) => el.child(div().truncate().text_size(TEXT.label).text_color(t.dim).child(d.title)));
     };
@@ -236,7 +283,8 @@ export default class CockpitPanel extends View {
       this.bar(t)
         .children(doc.tabs.map((x) => this.pill(`tab-${x.id}`, x.title, x === tab, x !== tab && unseen(x), (cx) => this.pickTab(x.id, cx), t)))
         .child(div().flex_1())
-        .when(Boolean(doc.kind), (el) => el.child(div().flex_none().text_size(TEXT.label).text_color(t.dim).child(doc.kind))),
+        .when(Boolean(doc.handled), (el) => el.child(this.handledBadge(doc, t)))
+        .when(Boolean(doc.kind), (el) => el.child(div().flex_none().ml(6).text_size(TEXT.label).text_color(t.dim).child(doc.kind))),
     );
 
     const pending = (tab.text.match(PENDING) ?? []).length;

@@ -78,6 +78,7 @@ If a cockpit's brief tells you to write a doc with `--into <tab-id>`, the doc be
 - `--into` never opens a panel. Don't run `cockpit-panel open` yourself; the cockpit owns its panel.
 - The content comes from the method the brief names (the repo's skill, agent or command). The template is only the format the owner reads it in.
 - Put the doc slug in your COCKPIT-SUMMARY, and end your turn with the status block the brief asks for.
+- The cockpit marks a doc once it's acted on (`cockpit-panel handled <slug> approved|changes-requested|commented --into <tab-id>`); the panel shows that in the doc's bar. Workers don't mark docs.
 
 ## Rules
 

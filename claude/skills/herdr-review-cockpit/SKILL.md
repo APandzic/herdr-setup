@@ -35,6 +35,7 @@ Pick it from where the repo is hosted (`git remote get-url origin`), unless the 
 | its diff | `gh pr diff <n>` | `twg bb prs diff <n>` (`diffstat` for a file list) |
 | comment | `gh pr comment <n> --body-file <file>` | `twg bb prs comment create --pull-request <n> --text <text>` |
 | approve | `gh pr review <n> --approve` | `twg bb prs approve <n>` |
+| request changes | `gh pr review <n> --request-changes --body-file <file>` | `twg bb prs request-changes <n>` (comments posted first) |
 
 Your verdict on a PR (`<me>` is "who am I"):
 - GitHub: `gh pr view <n> --json reviews --jq '[.reviews[] | select(.author.login == "<me>")] | last | .state'` gives `APPROVED`
@@ -93,12 +94,19 @@ Verdict and counts come from the worker's COCKPIT-SUMMARY, or from the Review fe
 "Approve 614", "let's approve it": approving is the owner's call, so do it even if the Review feedback verdict differs (say so in the same line). Then:
 1. Approve with the forge's "approve" command.
 2. Wait until it has landed: check your verdict every 5 seconds, for up to a minute, until it reads approved. If it never does, tell the owner what the forge shows and stop here; clean nothing up.
-3. Clean up everything the cockpit holds for that PR (approving counts as the owner asking to close it):
+3. Clean up what the cockpit holds for that PR (approving counts as the owner asking to close it), and keep its doc as the record:
    - its inbox task, found by key or URL: `cockpit-task close --key <key>` (it never comes back, whatever the scripts find)
    - its worker: close the worker's tab (ENGINE §9). If the worker made a worktree, remove it the repo's way, but only when it has no uncommitted changes; otherwise say so and leave it
-   - its doc: the folder in `~/.herdr/docs/<cockpit tab>/` whose `doc.json` has this `worker` (`rm -rf` that folder; the panel drops it)
+   - its doc: mark it approved (below); it stays in the panel
    - its roster row
-4. Report it in one line: `Approved frontend #614 (Bitbucket shows it). Closed its inbox task, worker tab and doc.`
+4. Report it in one line: `Approved frontend #614 (Bitbucket shows it). Closed its inbox task and worker tab; its doc is marked Approved.`
+
+## Mark what was done (in the panel)
+After anything posted on the forge for a PR (comments, request changes, approve), mark its doc so the panel's Docs tab shows it was handled. The doc is the folder in `~/.herdr/docs/<cockpit tab>/` whose `doc.json` has this PR's `worker`:
+```bash
+~/.claude/skills/cockpit-panel/scripts/cockpit-panel handled <slug> approved --into <cockpit tab>   # or changes-requested, commented
+```
+Mark the strongest thing done (approved > changes-requested > commented), and only once the forge shows it.
 
 ## Finish (ENGINE §9)
-Suggest the next step per PR (post the review, approve, ask the author). Post on the forge only when the owner asks, with its "comment" or "approve" command, and then post exactly the doc's text.
+Suggest the next step per PR (post the review, approve, ask the author). Post on the forge only when the owner asks, with its "comment", "request changes" or "approve" command, and then post exactly the doc's text. Then mark the doc (above).
