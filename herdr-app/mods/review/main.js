@@ -9,7 +9,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, Popover } from "gpui-base";
 import { spaces, panes, focused, props, exec, readTextFile, writeTextFile, watchFolder, theme, settings, home, checking } from "herdr";
-import { READ, CAP, info, commits, changes, tree, hash } from "./git.js";
+import { READ, CAP, info, commits, changes, tree, hash, rows as fileRows } from "./git.js";
 
 const TEXT = { badge: 10, label: 11.5, small: 12, body: 13 };
 const ROW = 20;
@@ -216,7 +216,7 @@ export default class Review extends View {
     const bodies = shown.map((file) => {
       if (folded(file) ? !this.open.has(file.path) : this.seen(file)) return null;
       // A new or deleted file's hunk header only repeats its line count.
-      const lines = file.rows.map((row, i) => ({ key: `${file.path}:${i}`, ...row, quiet: file.status === "A" })).filter((r) => !(folded(file) && r.kind === "@"));
+      const lines = fileRows(file).map((row, i) => ({ key: `${file.path}:${i}`, ...row, quiet: file.status === "A" })).filter((r) => !(folded(file) && r.kind === "@"));
       if (file.note) lines.push({ key: `${file.path}:note`, kind: "note", text: file.note });
       if (file.more) lines.push({ key: `${file.path}:more`, kind: "note", text: `… ${file.more} more lines not shown` });
       return lines;

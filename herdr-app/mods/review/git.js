@@ -186,10 +186,20 @@ export async function parsePatch(text, pause = async () => {}) {
 function finish(file) {
   file.hash = hash(`${file.from ?? ""}\n${file.note ?? ""}\n${file.lines.join("\n")}`);
   file.more = Math.max(0, file.lines.length - CAP.lines);
-  file.rows = diffRows(file.lines.slice(0, CAP.lines).map((l) => (l.length > CAP.chars ? `${l.slice(0, CAP.chars)}… (line truncated)` : l)));
+  file.lines = file.lines.slice(0, CAP.lines).map((l) => (l.length > CAP.chars ? `${l.slice(0, CAP.chars)}… (line truncated)` : l));
+  file.rows = null;
+  if (file.status !== "A" && file.status !== "D") rows(file);
+  return file;
+}
+
+// A file's numbered rows and widest line, made once. A new or deleted file's wait until it's
+// opened: on a big branch they're most of the lines, and numbering them most of the load.
+export function rows(file) {
+  if (file.rows) return file.rows;
+  file.rows = diffRows(file.lines);
   file.width = Math.max(0, ...file.rows.map((r) => r.text.length));
   delete file.lines;
-  return file;
+  return file.rows;
 }
 
 // Text draws a tab as nothing: pad each to the next 4-column stop.
