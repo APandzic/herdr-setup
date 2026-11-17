@@ -439,7 +439,7 @@ export default class Review extends View {
       .overflow_y_scrollbar()
       .text_size(TEXT.small)
       .children(this.treeRows.map(row))
-      .when(this.limited, (el) => el.child(div().p(6).text_size(TEXT.label).text_color(t.dim).child("Showing the first 1,000 changed files")));
+      .when(Boolean(this.limited), (el) => el.child(div().p(6).text_size(TEXT.label).text_color(t.dim).child("Showing the first 1,000 changed files")));
   }
 
   commitList(t) {
@@ -557,6 +557,7 @@ export default class Review extends View {
     if (this.error) return this.empty(t, this.error, this.origin.folder.replace(home(), "~"));
     if (!this.loaded || (this.loading && !this.files.length)) return this.empty(t, "Loading changes…");
     if (this.scope === "branch" && !repo?.base) return this.empty(t, "No base branch", "Neither origin/HEAD, main nor master is here. Open it with: review --base <branch>");
+    if (this.scope === "branch" && repo.head && !repo.mergeBase) return this.empty(t, `No history in common with ${repo.base}`, "Open it with another base: review --base <branch>");
     if (!this.files.length) {
       if (this.scope === "uncommitted") return this.empty(t, "No uncommitted changes");
       if (this.scope === "branch") return this.empty(t, `Nothing on ${repo.branch ?? "HEAD"} against ${repo.base} yet`);
