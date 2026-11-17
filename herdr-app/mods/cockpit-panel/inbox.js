@@ -414,11 +414,13 @@ export class Inbox {
     }
     if (item.state === "declined") {
       const until = (item.declined_at ?? 0) + ms(this.declineFor(), 48 * 3600000) / 1000 - Date.now() / 1000;
+      // Closed or worked on: cockpit-task never offers it again, so there's no countdown.
+      const closed = Boolean(item.closed_at || item.started_at || item.worker);
       return row.child(
         h_flex()
           .gap(6)
           .items_center()
-          .child(v_flex().flex_1().min_w(0).child(title.opacity(0.6)).child(this.meta(left(until), t)))
+          .child(v_flex().flex_1().min_w(0).child(title.opacity(0.6)).child(this.meta(closed ? "closed" : left(until), t)))
           .child(this.button(`undo-${item.key}`, "Undo", (cx) => this.act(["undo", "--key", item.key], cx), t, { muted: true })),
       );
     }
@@ -432,7 +434,7 @@ export class Inbox {
         .when(Boolean(item.author), (el) => el.child(this.avatar(item.author, 16)))
         .child(v_flex().flex_1().min_w(0).child(title).child(this.meta(label, t)))
         .when(item.state === "done", (el) =>
-          el.child(this.button(`clear-${item.key}`, "Clear", (cx) => this.act(["update", "--key", item.key, "--state", "declined"], cx), t, { muted: true })),
+          el.child(this.button(`clear-${item.key}`, "Clear", (cx) => this.act(["close", "--key", item.key], cx), t, { muted: true })),
         ),
     );
   }

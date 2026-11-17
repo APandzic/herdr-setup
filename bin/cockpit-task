@@ -4,9 +4,11 @@
 #                    [--author <name>] [--opened <unix seconds|ISO 8601>] [--branch <name>]
 #                    [--additions <n>] [--deletions <n>] [--files <n>]
 #                                       prints added | exists | declined (declined less than decline_for ago)
+#                                       | started (a worker had it; it never comes back)
 #                                       the optional fields are refreshed on a task that already exists
 #   cockpit-task update --key <key> [--state new|starting|running|done|declined] [--worker <t>]
 #   cockpit-task decline --key <key>    hide it; it can come back after decline_for
+#   cockpit-task close --key <key>      finished with (approved, cleared): hidden and never offered again
 #   cockpit-task undo --key <key>       back to new
 #   cockpit-task list [--key <key>] [--state <state>]   JSON
 #   cockpit-task where                  print this project's state folder
@@ -84,6 +86,8 @@ case "$cmd" in
     if [ -n "$row" ]; then
       st=$(jq -r .state <<<"$row")
       if [ "$st" = declined ]; then
+        # Closed, or cleared after a worker had it: finished, not something to offer again.
+        if jq -e '.closed_at or .started_at or .worker' <<<"$row" >/dev/null; then echo started; exit 0; fi
         at=$(jq -r '.declined_at // 0' <<<"$row")
         if [ $(( now - at )) -lt "$(decline_for)" ]; then echo declined; exit 0; fi
         write '.tasks |= map(if .key == $k then . + $m | .state = "new" | .added = $now | del(.declined_at) else . end)' \
@@ -101,16 +105,20 @@ case "$cmd" in
     need_key; lock; has_key || die "no task $key"
     write '.tasks |= map(if .key == $k then (if $st == "" then . else .state = $st end)
                          | (if $w == "" then . else .worker = $w end)
-                         | (if $st == "declined" then .declined_at = $now else . end) else . end)' \
+                         | (if $st == "declined" then .declined_at = $now else . end)
+                         | (if $st == "starting" or $st == "running" or $st == "done" then .started_at //= $now else . end) else . end)' \
       --arg k "$key" --arg st "$state" --arg w "$worker" --argjson now "$now" ;;
   decline)
     need_key; lock; has_key || die "no task $key"
     write '.tasks |= map(if .key == $k then .state = "declined" | .declined_at = $now else . end)' --arg k "$key" --argjson now "$now" ;;
+  close)
+    need_key; lock; has_key || die "no task $key"
+    write '.tasks |= map(if .key == $k then .state = "declined" | .declined_at = $now | .closed_at = $now else . end)' --arg k "$key" --argjson now "$now" ;;
   undo)
     need_key; lock; has_key || die "no task $key"
-    write '.tasks |= map(if .key == $k then .state = "new" | del(.declined_at) else . end)' --arg k "$key" ;;
+    write '.tasks |= map(if .key == $k then .state = "new" | del(.declined_at, .closed_at) else . end)' --arg k "$key" ;;
   list)
     jq --arg k "$key" --arg st "$state" '[.tasks[] | select(($k == "" or .key == $k) and ($st == "" or .state == $st))]' "$INBOX" ;;
   where) echo "$STATE" ;;
-  *) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

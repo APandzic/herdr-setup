@@ -29,12 +29,18 @@ Pick it from where the repo is hosted (`git remote get-url origin`), unless the 
 | | GitHub (`github.com`) | Bitbucket (`bitbucket.org`) |
 |---|---|---|
 | CLI | `gh` | `twg bb` (Atlassian's `twg`) |
-| who am I | `gh api user --jq .login` | `twg user get` |
+| who am I | `gh api user --jq .login` | `twg whoami -o json --output-summary none`, its `data.name` |
 | open PRs | `gh pr list --state open --limit 30 --json number,title,url,author,isDraft` | `twg bb prs query --state OPEN --limit 30 -o json` |
 | one PR | `gh pr view <n> --json number,title,author,url,headRefName,baseRefName` | `twg bb prs get <n>` |
 | its diff | `gh pr diff <n>` | `twg bb prs diff <n>` (`diffstat` for a file list) |
 | comment | `gh pr comment <n> --body-file <file>` | `twg bb prs comment create --pull-request <n> --text <text>` |
 | approve | `gh pr review <n> --approve` | `twg bb prs approve <n>` |
+
+Your verdict on a PR (`<me>` is "who am I"):
+- GitHub: `gh pr view <n> --json reviews --jq '[.reviews[] | select(.author.login == "<me>")] | last | .state'` gives `APPROVED`
+- Bitbucket: `twg bb prs get <n> -o json --output-summary none | jq -r '.participants[] | select(.user.display_name == "<me>") | .state'` gives `approved`
+
+On Bitbucket, outside the PR's own checkout (a cockpit over several repos), add `-w <workspace> -r <repo>` to every `twg bb` command.
 
 Another host: ask the owner which CLI to use. If the CLI is missing or not logged in (`gh auth status`, `twg env`), tell the owner and stop. Below, "the forge" means this CLI and its site.
 
@@ -45,7 +51,7 @@ Another host: ask the owner which CLI to use. If the CLI is missing or not logge
   cockpit-task add --key "pr-$n" --title "PR #$n: $title" --url "$url" --task "Review PR #$n by $author" --source cockpit \
     --author "$author_name" --opened "$created" --branch "$source_branch" --additions "$added" --deletions "$removed" --files "$files"
   ```
-  The panel groups the inbox by `--author` and shows the age, branch and size, so pass what the forge gives; leave out what it doesn't (on Bitbucket, `twg bb prs get <n> --diff` has the size). On GitHub that is:
+  The panel groups the inbox by `--author` and shows the age, branch and size, so pass what the forge gives; leave out what it doesn't (on Bitbucket, sum `lines_added`, `lines_removed` and the entries of `twg bb prs diffstat <n> -n 1000 -o json`; `get --diff` stops at 100 files). On GitHub that is:
   ```bash
   me=$(gh api user --jq .login)
   gh pr list --state open --limit 30 --json number,title,url,author,isDraft,headRefName,createdAt,additions,deletions,changedFiles |
@@ -80,6 +86,17 @@ In COCKPIT-SUMMARY, include the verdict and the counts: `APPROVE · 0 critical �
 | worker | PR | verdict | critical / required | state |
 
 Verdict and counts come from the worker's COCKPIT-SUMMARY, or from the Review feedback doc if the summary lacks them. Decisions are rare in reviews. Report questions for the PR author as decisions only when the owner must answer them.
+
+## Approve (when the owner says so)
+"Approve 614", "let's approve it": approving is the owner's call, so do it even if the Review feedback verdict differs (say so in the same line). Then:
+1. Approve with the forge's "approve" command.
+2. Wait until it has landed: check your verdict every 5 seconds, for up to a minute, until it reads approved. If it never does, tell the owner what the forge shows and stop here; clean nothing up.
+3. Clean up everything the cockpit holds for that PR (approving counts as the owner asking to close it):
+   - its inbox task, found by key or URL: `cockpit-task close --key <key>` (it never comes back, whatever the scripts find)
+   - its worker: close the worker's tab (ENGINE §9). If the worker made a worktree, remove it the repo's way, but only when it has no uncommitted changes; otherwise say so and leave it
+   - its doc: the folder in `~/.herdr/docs/<cockpit tab>/` whose `doc.json` has this `worker` (`rm -rf` that folder; the panel drops it)
+   - its roster row
+4. Report it in one line: `Approved frontend #614 (Bitbucket shows it). Closed its inbox task, worker tab and doc.`
 
 ## Finish (ENGINE §9)
 Suggest the next step per PR (post the review, approve, ask the author). Post on the forge only when the owner asks, with its "comment" or "approve" command, and then post exactly the doc's text.

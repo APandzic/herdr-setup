@@ -184,6 +184,8 @@ A repo can register helper scripts in `<repo>/.herdr/cockpit.json`. The scripts 
 2. Launch a worker for it as in §4–5, with the method found in §2. Name the worker after the key.
 3. `cockpit-task update --key <key> --state running --worker <terminal>`. When the worker settles done: `--state done`. If it fails, report it as usual.
 
+**Tasks named in chat go through the inbox too**, so a script's next refetch sees they're taken. Before launching, look for the task in `cockpit-task list` (same key, or the same URL). Found: name the worker after its key and do step 3. Not there: `cockpit-task add --key <worker> --title <title> --url <url> --source cockpit` first, then step 3. A task that was started never comes back as new, even after Clear.
+
 Never start work from the inbox on your own, and never decline tasks yourself; the owner's buttons do that.
 
 **Adding scripts.** When the owner asks ("add ~/scripts/x.sh as a watcher"), edit `.herdr/cockpit.json` (create it, with `.herdr/` in the repo's `.gitignore` unless the owner wants it committed). Check that the script exists and is executable, pick a short unique `id`, and confirm in one line. The panel picks the change up by itself. Never edit or run the scripts themselves unless asked.
