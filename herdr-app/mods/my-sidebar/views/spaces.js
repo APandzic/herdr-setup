@@ -30,7 +30,13 @@ const rowHeight = ({ tree }) => (tree ? 28 : 30);
 const GIT_FALLBACK_MS = 15000;
 // Preferences a person may change in the installed mod.json under `settings`.
 // `combined` is read by the lists view: tabs, or spaces above agents.
-const DEFAULT_SETTINGS = { git: { retry_after: "15s" }, pull_request_status: true, combined: true };
+// `setup` is read by the footer: how often it checks the herdr-setup repo for updates.
+export const DEFAULT_SETTINGS = {
+  git: { retry_after: "15s" },
+  pull_request_status: true,
+  combined: true,
+  setup: { check_every: "1h" },
+};
 
 // What a stored color name looks like on an avatar (the same in every mod
 // that draws space avatars): one strong color per hue, light and dark alike.

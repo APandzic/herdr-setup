@@ -79,4 +79,8 @@ case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "  Note: add ~/.local/bin t
 for old in better-sidebar better-config; do
   [ -d "$APP/mods/$old" ] && echo "Note: $APP/mods/$old is still installed; my-${old#better-} replaces it, so you can delete it."
 done
+# Where this repo lives, so My Sidebar can check it for updates (update.sh).
+mkdir -p "$DATA"
+jq -n --arg repo "$REPO" '{repo: $repo}' > "$DATA/herdr-setup.json"
+
 echo "Done. To show the layout: herdr-app do layout.switch '{\"name\":\"my-main\"}'"

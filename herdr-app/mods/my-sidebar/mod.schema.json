@@ -89,6 +89,23 @@
           "description": "Colour spaces by their pull request's state, through the GitHub CLI. Turn off if you don't have gh.",
           "type": "boolean",
           "default": true
+        },
+        "setup": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "check_every": {
+              "title": "Check for setup updates",
+              "description": "How often the footer checks the herdr-setup repo on GitHub for new commits. Shows a dot on the Update button when there are some.",
+              "type": [
+                "string",
+                "integer"
+              ],
+              "format": "duration",
+              "pattern": "^\\s*\\d+(\\.\\d+)?\\s*(ms|s|m|h)\\s*$",
+              "default": "1h"
+            }
+          }
         }
       }
     }
