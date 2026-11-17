@@ -27,6 +27,18 @@ const ago = (seconds) => {
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   return `${Math.floor(s / 86400)}d`;
 };
+const initials = (name) => {
+  const words = name.trim().split(/[\s._-]+/).filter(Boolean);
+  return (words.length > 1 ? words[0][0] + words[1][0] : name.trim().slice(0, 2)).toUpperCase();
+};
+// Authors get the same colors as the sidebar's space avatars, picked from their name.
+const AUTHOR_COLORS = ["#22a99a", "#e3814f", "#5b8def", "#8b7cf6", "#3fae6a", "#d9649a"];
+const authorColor = (name) => {
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.codePointAt(0)) >>> 0;
+  return AUTHOR_COLORS[h % AUTHOR_COLORS.length];
+};
+const sizeOf = (lines) => (lines < 100 ? "S" : lines < 400 ? "M" : lines < 1000 ? "L" : "XL");
 const left = (seconds) => {
   const s = Math.max(0, Math.ceil(seconds));
   return s >= 3600 ? `${Math.ceil(s / 3600)}h left` : `${Math.ceil(s / 60)}m left`;
@@ -295,24 +307,111 @@ export class Inbox {
     return div().text_size(TEXT.label).text_color(t.dim).truncate().child(text);
   }
 
-  taskRow(item, t) {
-    const title = div()
+  avatar(name, size) {
+    return div()
+      .flex_none()
+      .size(size)
+      .rounded_full()
+      .bg(authorColor(name))
+      .flex()
+      .items_center()
+      .justify_center()
+      .text_size(size < 18 ? 7.5 : 8.5)
+      .font_bold()
+      .text_color("#ffffff")
+      .child(initials(name));
+  }
+
+  authorHeading(name, count, t) {
+    return h_flex()
+      .flex_none()
+      .mx(8)
+      .px(8)
+      .pt(8)
+      .pb(2)
+      .gap(8)
+      .items_center()
+      .child(this.avatar(name, 18))
+      .child(div().min_w(0).truncate().text_size(TEXT.small).font_semibold().text_color(authorColor(name)).child(name))
+      .child(div().flex_1())
+      .child(div().text_size(TEXT.badge).text_color(t.dim).child(String(count)));
+  }
+
+  // Size badge and the counts of lines added and removed and files. Null without the numbers.
+  stats(item, t) {
+    const add = item.additions ?? 0;
+    const del = item.deletions ?? 0;
+    if (item.additions == null && item.deletions == null && item.files == null) return null;
+    return h_flex()
+      .gap(6)
+      .items_center()
+      .child(
+        div()
+          .flex_none()
+          .px(4)
+          .h(15)
+          .flex()
+          .items_center()
+          .rounded(4)
+          .border_1()
+          .border_color(t.border)
+          .text_size(TEXT.badge)
+          .font_bold()
+          .text_color(t.muted)
+          .child(sizeOf(add + del)),
+      )
+      .child(
+        h_flex()
+          .min_w(0)
+          .gap(4)
+          .text_size(TEXT.label)
+          .child(div().text_color(t.done).child(`+${add.toLocaleString("en")}`))
+          .child(div().text_color(t.blocked).child(`−${del.toLocaleString("en")}`))
+          .when(item.files != null, (el) => el.child(div().truncate().text_color(t.dim).child(`· ${item.files} ${item.files === 1 ? "file" : "files"}`))),
+      );
+  }
+
+  taskRow(item, t, grouped = false) {
+    // Under its author's heading, "PR #12: Fix" reads as "#12 Fix".
+    const pr = grouped ? /^PR (#\d+):\s*(.*)$/.exec(item.title) : null;
+    const title = h_flex()
       .id(`title-${item.key}`)
+      .min_w(0)
+      .gap(5)
       .text_size(TEXT.small)
       .text_color(t.foreground)
-      .truncate()
       .when(Boolean(item.url), (el) => el.cursor_pointer().hover((s) => s.text_color(t.accent)).on_click(() => exec("open", [item.url])))
-      .child(item.title);
-    const row = v_flex().id(`task-${item.key}`).mx(8).px(8).py(6).gap(4).rounded(7).hover((s) => s.bg(t.hover));
-    if (item.state === "new")
-      return row.child(title).child(
-        h_flex()
-          .gap(6)
-          .items_center()
-          .child(div().flex_1().min_w(0).child(this.meta(`${item.source} · ${ago(item.added)}`, t)))
-          .child(this.button(`decline-${item.key}`, "Decline", (cx) => this.act(["decline", "--key", item.key], cx), t, { muted: true }))
-          .child(this.button(`start-${item.key}`, "Start worker", (cx) => this.start(item, cx), t, { primary: true })),
-      );
+      .when(Boolean(pr), (el) => el.child(div().flex_none().text_color(t.dim).child(pr[1])))
+      .child(div().min_w(0).truncate().child(pr ? pr[2] : item.title));
+    const row = v_flex().id(`task-${item.key}`).px(8).py(6).gap(4).hover((s) => s.bg(t.hover));
+    if (grouped) row.ml(26).mr(8).rounded_r(7).border_l_1().border_color(`${authorColor(item.author)}59`);
+    else row.mx(8).rounded(7);
+    if (item.state === "new") {
+      // How long it has waited stays quiet: dim text, and a small dot once it's been over a day.
+      const since = item.opened ?? item.added;
+      const stale = Date.now() / 1000 - since > 86400;
+      const where = item.branch ?? (grouped || !item.author ? item.source : item.author);
+      const stats = this.stats(item, t);
+      return row
+        .child(title)
+        .when(Boolean(stats), (el) => el.child(stats))
+        .child(
+          h_flex()
+            .gap(6)
+            .items_center()
+            .when(stale, (el) => el.child(div().flex_none().size(5).rounded(3).bg(t.working)))
+            .child(
+              div()
+                .id(`age-${item.key}`)
+                .flex_1()
+                .min_w(0)
+                .tooltip(`${item.opened ? "Opened" : "Found"} ${ago(since)} ago`)
+                .child(this.meta(`${ago(since)} · ${where}`, t)),
+            )
+            .child(this.button(`decline-${item.key}`, "Decline", (cx) => this.act(["decline", "--key", item.key], cx), t, { muted: true }))
+            .child(this.button(`start-${item.key}`, "Start worker", (cx) => this.start(item, cx), t, { primary: true })),
+        );
+    }
     if (item.state === "declined") {
       const until = (item.declined_at ?? 0) + ms(this.declineFor(), 48 * 3600000) / 1000 - Date.now() / 1000;
       return row.child(
@@ -330,11 +429,22 @@ export class Inbox {
         .gap(8)
         .items_center()
         .child(div().flex_none().size(7).rounded(4).bg(color))
+        .when(Boolean(item.author), (el) => el.child(this.avatar(item.author, 16)))
         .child(v_flex().flex_1().min_w(0).child(title).child(this.meta(label, t)))
         .when(item.state === "done", (el) =>
           el.child(this.button(`clear-${item.key}`, "Clear", (cx) => this.act(["update", "--key", item.key, "--state", "declined"], cx), t, { muted: true })),
         ),
     );
+  }
+
+  // New tasks under their authors, the author with the newest task first; tasks without one after.
+  grouped(fresh, t) {
+    const authors = new Map();
+    for (const x of fresh) if (x.author) authors.set(x.author, [...(authors.get(x.author) ?? []), x]);
+    const out = [];
+    for (const [name, items] of authors)
+      out.push(this.authorHeading(name, items.length, t), ...items.map((x) => this.taskRow(x, t, true)));
+    return [...out, ...fresh.filter((x) => !x.author).map((x) => this.taskRow(x, t))];
   }
 
   scriptRow(s, t) {
@@ -436,7 +546,7 @@ export class Inbox {
     if (active.length) body.child(this.heading("Workers", active.length, t, null)).children(active.map((x) => this.taskRow(x, t)));
     body.child(this.heading("Inbox", fresh.length, t, null));
     if (!fresh.length) body.child(this.empty(t, "Nothing waiting", "Tasks your scripts find show up here."));
-    body.children(fresh.map((x) => this.taskRow(x, t)));
+    body.children(this.grouped(fresh, t));
     if (declined.length) {
       body.child(
         this.heading(

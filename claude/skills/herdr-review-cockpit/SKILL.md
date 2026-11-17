@@ -42,16 +42,19 @@ Another host: ask the owner which CLI to use. If the CLI is missing or not logge
 - A task is a PR number (`1234`, `#1234`) or a PR URL. Worker name: `pr-<number>`.
 - No PRs named: put the open PRs (not drafts, not the owner's own) in the inbox, newest first, and say how many are waiting. List them with the forge's "open PRs", drop drafts and the owner's own, and add each one:
   ```bash
-  cockpit-task add --key "pr-$n" --title "PR #$n: $title" --url "$url" --task "Review PR #$n by $author" --source cockpit
+  cockpit-task add --key "pr-$n" --title "PR #$n: $title" --url "$url" --task "Review PR #$n by $author" --source cockpit \
+    --author "$author_name" --opened "$created" --branch "$source_branch" --additions "$added" --deletions "$removed" --files "$files"
   ```
-  On GitHub that is:
+  The panel groups the inbox by `--author` and shows the age, branch and size, so pass what the forge gives; leave out what it doesn't (on Bitbucket, `twg bb prs get <n> --diff` has the size). On GitHub that is:
   ```bash
   me=$(gh api user --jq .login)
-  gh pr list --state open --limit 30 --json number,title,url,author,isDraft |
+  gh pr list --state open --limit 30 --json number,title,url,author,isDraft,headRefName,createdAt,additions,deletions,changedFiles |
     jq -c --arg me "$me" '.[] | select((.isDraft | not) and .author.login != $me)' | while read -r pr; do
-      n=$(jq -r .number <<<"$pr")
-      cockpit-task add --key "pr-$n" --title "PR #$n: $(jq -r .title <<<"$pr")" --url "$(jq -r .url <<<"$pr")" \
-        --task "Review PR #$n by $(jq -r .author.login <<<"$pr")" --source cockpit
+      f() { jq -r "$1" <<<"$pr"; }; n=$(f .number)
+      cockpit-task add --key "pr-$n" --title "PR #$n: $(f .title)" --url "$(f .url)" \
+        --task "Review PR #$n by $(f .author.login)" --source cockpit \
+        --author "$(f 'if (.author.name // "") != "" then .author.name else .author.login end')" --opened "$(f .createdAt)" \
+        --branch "$(f .headRefName)" --additions "$(f .additions)" --deletions "$(f .deletions)" --files "$(f .changedFiles)"
     done
   ```
   Declined PRs stay out by themselves (`cockpit-task` skips them while they're declined).

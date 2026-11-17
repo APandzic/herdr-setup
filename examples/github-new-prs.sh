@@ -16,13 +16,18 @@ done
 me=$(gh api user --jq .login)
 
 check() {
-  local args=(pr list --state open --limit 50 --json number,title,url,author,isDraft,baseRefName)
+  local args=(pr list --state open --limit 50
+    --json number,title,url,author,isDraft,baseRefName,headRefName,createdAt,additions,deletions,changedFiles)
   [ -n "$base" ] && args+=(--base "$base")
   gh "${args[@]}" | jq -c --arg me "$me" '.[] | select(.isDraft | not) | select(.author.login != $me)' |
     while read -r pr; do
       n=$(jq -r .number <<<"$pr")
-      result=$(cockpit-task add --key "pr-$n" --title "PR #$n: $(jq -r .title <<<"$pr")" \
-        --url "$(jq -r .url <<<"$pr")" --task "Review PR #$n by $(jq -r .author.login <<<"$pr") into $(jq -r .baseRefName <<<"$pr")")
+      field() { jq -r "$1" <<<"$pr"; }
+      result=$(cockpit-task add --key "pr-$n" --title "PR #$n: $(field .title)" --url "$(field .url)" \
+        --task "Review PR #$n by $(field .author.login) into $(field .baseRefName)" \
+        --author "$(field 'if (.author.name // "") != "" then .author.name else .author.login end')" \
+        --opened "$(field .createdAt)" --branch "$(field .headRefName)" \
+        --additions "$(field .additions)" --deletions "$(field .deletions)" --files "$(field .changedFiles)")
       [ "$result" = added ] && echo "$(date +%H:%M) added PR #$n"
     done
 }
