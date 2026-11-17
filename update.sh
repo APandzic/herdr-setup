@@ -47,9 +47,11 @@ done
 for f in herdr-app/layouts/*.json; do
   [ -f "$APP/layouts/$(basename "$f")" ] && ! same "$f" "$APP/layouts/$(basename "$f")" && drift+=("layouts/$(basename "$f")")
 done
-for f in settings.json keys.json; do
-  [ -f "herdr-app/$f" ] && [ -f "$APP/$f" ] && ! same "herdr-app/$f" "$APP/$f" && drift+=("$f")
-done
+[ -f "$APP/settings.json" ] && ! same herdr-app/settings.json "$APP/settings.json" && drift+=("settings.json")
+# keys.json: only the keys keys.add.json adds, and only when one is bound to something else here
+# (install would overwrite that). A missing one isn't drift: install adds it back.
+[ -f "$APP/keys.json" ] && jq empty "$APP/keys.json" 2>/dev/null && ! jq -e --slurpfile add herdr-app/keys.add.json '. as $live | [$add[0] | to_entries[] | .key as $s | .value | to_entries[]
+  | .key as $k | .value as $v | ($live[$s] // {}) | (has($k) | not) or .[$k] == $v] | all' "$APP/keys.json" >/dev/null 2>&1 && drift+=("keys.json (keys from keys.add.json)")
 for src in herdr-mods/*/; do
   name=$(basename "$src")
   [ -d "$DATA/$name/templates" ] && [ -d "$src/templates" ] && ! same "$src/templates" "$DATA/$name/templates" && drift+=("herdr-mods/$name/templates")

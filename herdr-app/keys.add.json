@@ -1,0 +1,11 @@
+{
+  "global": {
+    "cmd-shift-r": {
+      "command": "pane.split",
+      "args": {
+        "direction": "right",
+        "mod": "review"
+      }
+    }
+  }
+}

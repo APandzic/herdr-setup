@@ -8,7 +8,7 @@ My [Herdr app](https://herdr.dev/) setup and the Claude Code skills that go with
 |---|---|
 | `herdr-app/layouts/my-main.json` | My window layout: sidebar with Spaces / Agents tabs, tabs bar, Files and Changes panel. |
 | `herdr-app/settings.json` | App settings (zoom, sounds, fonts). |
-| `herdr-app/keys.json` | Herdr's keys, plus `cmd-shift-r` for Review. |
+| `herdr-app/keys.add.json` | The keys this setup adds to Herdr's (`cmd-shift-r` for Review); merged into your keys.json, the rest of which stays yours. |
 | `herdr-app/mods/my-sidebar` | The sidebar: spaces with their tabs and agents, an Agents list, footer, panel toggle. Forked from Better Sidebar. |
 | `herdr-app/mods/my-config` | A settings dialog for every mod that has settings. Forked from Better Config. |
 | `herdr-app/mods/my-usage` | Claude's plan limits (5-hour, weekly) above the sidebar's footer, Codex's too when you've used it. Modeled on Over9k Usage. |
@@ -81,7 +81,7 @@ Open it:
 
 Branch compares with `--base`, else origin's default branch (the local one when there is one), else `main` or `master`. Feedback, approving and merging go through the cockpit's chat; Review never changes the repo.
 
-The key lives in `herdr-app/keys.json`, which `install.sh` copies over Herdr's own. Herdr adds its new default keys on upgrade only to a keys file nobody has changed, so from now on a new default key has to be added to this one by hand.
+The key lives in `herdr-app/keys.add.json`. `install.sh` merges it into `~/.config/herdr-app/keys.json` (backed up first): its keys replace those same keys, everything else in the file stays as it is, and a run that has nothing to add leaves the file alone. `capture.sh` brings back only those keys' bindings, and `update.sh` stops only if you've bound one of them to something else in the app. One catch: Herdr gives a keys file its new default keys on upgrade only while nobody has edited it, and the merge is an edit, so after the first install, new default keys from a Herdr update have to be added by hand.
 
 ## Usage in the sidebar
 

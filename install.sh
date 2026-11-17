@@ -3,7 +3,8 @@
 # Anything it replaces is copied to ~/.herdr-setup-backups/<time>/ first.
 #   herdr-app/mods/<name>/      → ~/.config/herdr-app/mods/<name>/   (copied: Herdr won't load a symlinked mod's icons)
 #   herdr-app/layouts/*.json    → ~/.config/herdr-app/layouts/
-#   herdr-app/settings.json     → ~/.config/herdr-app/settings.json  (and keys.json, if the repo has one)
+#   herdr-app/settings.json     → ~/.config/herdr-app/settings.json
+#   herdr-app/keys.add.json     → merged into ~/.config/herdr-app/keys.json (its keys win; the rest stays)
 #   herdr-mods/<name>/          → ~/.config/herdr-mods/<name>/        (mod data such as cockpit-panel templates)
 #   claude/skills/<name>/       → ~/.claude/skills/<name>             (symlinked, so a git pull updates them)
 #   bin/<command>               → ~/.local/bin/<command>              (symlinked)
@@ -43,10 +44,20 @@ echo "Layouts and settings"
 for f in "$REPO"/herdr-app/layouts/*.json; do
   backup "$APP/layouts/$(basename "$f")"; cp "$f" "$APP/layouts/"; echo "  layouts/$(basename "$f")"
 done
-for f in settings.json keys.json; do
-  [ -f "$REPO/herdr-app/$f" ] || continue
-  backup "$APP/$f"; cp "$REPO/herdr-app/$f" "$APP/$f"; echo "  $f"
-done
+backup "$APP/settings.json"; cp "$REPO/herdr-app/settings.json" "$APP/settings.json"; echo "  settings.json"
+# keys.json is Herdr's and yours: only the keys this setup adds are written into it, per section.
+ADD="$REPO/herdr-app/keys.add.json" KEYS="$APP/keys.json"
+if [ -f "$KEYS" ] && ! jq empty "$KEYS" 2>/dev/null; then
+  echo "  Note: $KEYS isn't valid JSON; add the keys in herdr-app/keys.add.json yourself."
+else
+  merged=$( { cat "$KEYS" 2>/dev/null || echo '{}'; } | jq --slurpfile add "$ADD" \
+    'reduce ($add[0] | to_entries[]) as $s (.; .[$s.key] = ((.[$s.key] // {}) + $s.value))')
+  if [ -f "$KEYS" ] && [ "$merged" = "$(jq . "$KEYS")" ]; then
+    echo "  keys.json (has keys.add.json)"
+  else
+    backup "$KEYS"; printf '%s\n' "$merged" > "$KEYS"; echo "  keys.json ← keys.add.json"
+  fi
+fi
 
 echo "Mod data"
 for src in "$REPO"/herdr-mods/*/; do
