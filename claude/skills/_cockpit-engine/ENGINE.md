@@ -127,8 +127,12 @@ For more detail on a finished worker, read its doc in the cockpit's panel folder
 ## 7. Report
 
 1. The roster: one row per worker, with the columns the cockpit skill defines, each cell kept short.
-2. Decisions, grouped by worker: header `**<name>** — <task>`, then `  N. <question> Rec: <x>.`, numbered across all workers.
-3. A pre-filled reply line: `→ 1: <rec>, 2: <rec>, …`. The owner sends it as-is or edits numbers.
+2. Decisions go to the panel, not into chat. Add each of a worker's decisions to its doc (the slug from its COCKPIT-SUMMARY), where the owner sees them under Open questions and answers with a button:
+   ```bash
+   TD decision add <doc slug> "<question>" --option "<choice>" --option "<choice>" --rec <n> --context "<one line of why>" --into <your tab id>
+   ```
+   Short options (a few words each), at most four; the recommended one by number. In chat, one line: `Open questions: 2 for frontend-608, 1 for frontend-612 (in the panel)`.
+3. Only what has no worker doc stays in chat: your own questions and dialogs a worker is blocked on, as `N. <question> Rec: <x>.` and a pre-filled reply line `→ 1: <rec>, 2: <rec>, …`.
 4. One line: "Details are in the panel on the right". Name a worker's tab only when its dialog needs the owner's eyes.
 5. With an Inbox tab: `Inbox: N new` (from `cockpit-task list --state new`), never the tasks themselves.
 
@@ -136,7 +140,7 @@ Nothing else. Never paste worker output or doc contents into chat. Keep it under
 
 **Flag your tab when you wait for the owner.** A report with decisions, a question, a worker blocked on a dialog: before ending that turn, run
 ```bash
-hc label "$HC_TERMINAL_ID" attention="<why, under 60 characters, e.g. 2 decisions for frontend-612>"
+hc label "$HC_TERMINAL_ID" attention="<why, under 60 characters, e.g. 2 open questions for frontend-612>"
 ```
 The sidebar shows "Needs your attention" on your tab and clears it when the owner looks. Don't flag reports that need nothing from the owner.
 
@@ -144,7 +148,14 @@ When the owner asks for status mid-round, run `herdr-app ls` and show the roster
 
 ## 8. Relay decisions
 
-For each answer in the owner's reply line:
+Answers arrive three ways:
+
+- From the panel: the message `DECISION <doc slug> <id>: <answer>`. The panel has recorded it already. Say nothing in chat.
+- In chat, for a panel question: `608 D1: accept`, naming the worker or doc and the question's id. Record it so the history has it: `TD decision answer <doc slug> <id> "<answer>" --into <your tab id>`.
+- In chat, numbers from your reply line (section 7.3).
+- From the panel's Discuss in chat: the message `DISCUSS <doc slug> <id>`. Post that question in chat with its options, its context and what the worker found, and talk it through with the owner. Once you agree, record the outcome as the answer (`TD decision answer`, in a few words) and say it in one line.
+
+A worker gets its answers once all of its doc's questions are answered (`TD decision list <doc slug> --into <your tab id>` shows none without `answered`), all in one prompt. Then, for each answer:
 
 - Blocked worker: press only the keys that select the owner's choice, one dialog at a time, then reread the screen to confirm it closed:
   ```bash
@@ -152,7 +163,7 @@ For each answer in the owner's reply line:
   ```
 - Idle worker with a decision: send it as a new prompt, in the background:
   ```bash
-  hc send <terminal> "Decision for '<question>': <answer>. Continue, and end your turn with the COCKPIT block." --wait --timeout 3600
+  hc send <terminal> "Decisions: '<question>': <answer>; '<question>': <answer>. Continue, and end your turn with the COCKPIT block." --wait --timeout 3600
   ```
 - A changed or new task: a new worker as in section 4. Reuse a worker only for follow-ups on its own task.
 

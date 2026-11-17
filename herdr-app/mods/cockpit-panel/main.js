@@ -5,9 +5,12 @@
 // then the chosen tab rendered. Rereads when anything under the folder changes.
 // Opened for a cockpit (props project and cockpit_terminal too), it has two top tabs:
 // Docs, and Inbox (the project's scripts and the tasks they find, inbox.js).
+// A doc with decisions.json (cockpit-panel decision) also gets Open questions, answered here with
+// buttons that tell the cockpit (hc send "DECISION <doc> <id>: <answer>") or hand the question to
+// its chat ("DISCUSS <doc> <id>"), and Decision history.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
-import { exec, readTextFile, watchFolder, checking, home, props, theme, panes } from "herdr";
+import { exec, readTextFile, writeTextFile, watchFolder, checking, home, props, theme, panes, notify } from "herdr";
 import { Inbox } from "./inbox.js";
 
 const TEXT = { badge: 10, label: 11.5, small: 12, body: 13 };
@@ -97,6 +100,22 @@ export default class CockpitPanel extends View {
         const text = (await readTextFile(path).catch(() => null)) ?? "";
         tabs.push({ id: tab.id, title: tab.title ?? tab.id, path, text });
       }
+      // Decisions: open ones and the history, as two tabs after the doc's own.
+      const file = `${folder}/decisions.json`;
+      let decisions = [];
+      try {
+        decisions = JSON.parse((await readTextFile(file).catch(() => null)) ?? "null")?.decisions ?? [];
+      } catch {
+        // Mid-write; the next change reloads it.
+      }
+      if (Array.isArray(decisions) && decisions.length) {
+        const open = decisions.filter((x) => !x.answered);
+        const done = decisions.filter((x) => x.answered).sort((a, b) => String(b.answered.at).localeCompare(String(a.answered.at)));
+        const title = open.length ? `Open questions · ${open.length}` : "Open questions";
+        tabs.push({ id: "open-questions", title, path: `${file}#open`, text: open.map((x) => x.id).join(), view: "open", decisions: open });
+        if (done.length)
+          tabs.push({ id: "decision-history", title: "Decision history", path: `${file}#history`, text: done.map((x) => x.id).join(), view: "history", decisions: done });
+      }
       docs.push({
         id: name,
         title: meta.title ?? name,
@@ -182,6 +201,172 @@ export default class CockpitPanel extends View {
       .child(short ? h.short : h.label);
   }
 
+  openQuestions(doc, tab, t) {
+    if (!tab.decisions.length) return this.empty(t, "No open questions", "What you've answered is in Decision history.");
+    return v_flex()
+      .id("open-questions")
+      .flex_1()
+      .min_h(0)
+      .overflow_y_scrollbar()
+      .px(18)
+      .py(14)
+      .gap(14)
+      .children(tab.decisions.map((q) => this.question(doc, q, t)));
+  }
+
+  question(doc, q, t) {
+    const sending = this.sending?.has(`${doc.id}/${q.id}`);
+    const option = (label, i) =>
+      div()
+        .id(`answer-${q.id}-${i}`)
+        .px(10)
+        .py(4)
+        .rounded(6)
+        .cursor_pointer()
+        .text_size(TEXT.small)
+        .font_medium()
+        .when(label === q.rec, (el) => el.bg(t.solid).text_color(t.solid_foreground).hover((s) => s.opacity(0.9)))
+        .when(label !== q.rec, (el) => el.border_1().border_color(t.border).text_color(t.foreground).hover((s) => s.bg(t.hover)))
+        .on_click((_e, cx) => this.answer(doc, q, label, cx))
+        .child(label);
+    return v_flex()
+      .id(`question-${q.id}`)
+      .gap(8)
+      .pb(14)
+      .border_b(1)
+      .border_color(t.border)
+      .child(
+        h_flex()
+          .gap(8)
+          .items_start()
+          .child(div().flex_none().pt(1).text_size(TEXT.label).font_semibold().text_color(t.dim).child(q.id))
+          .child(div().flex_1().min_w(0).child(TextView.markdown(`q-${doc.id}-${q.id}`, q.question).selectable())),
+      )
+      .when(Boolean(q.context), (el) =>
+        el.child(div().pl(26).text_size(TEXT.small).text_color(t.muted).child(TextView.markdown(`qc-${doc.id}-${q.id}`, q.context))),
+      )
+      .when(Boolean(q.discussing) && !sending, (el) =>
+        el.child(div().pl(26).text_size(TEXT.small).font_medium().text_color(t.accent).child("Being discussed in the cockpit's chat")),
+      )
+      .when(sending, (el) => el.child(div().pl(26).text_size(TEXT.small).text_color(t.dim).child("Sending to the cockpit…")))
+      .when(!sending, (el) =>
+        el.child(
+          h_flex()
+            .pl(26)
+            .flex_wrap()
+            .gap(6)
+            .children((q.options ?? []).map(option))
+            .when(!q.discussing, (row) =>
+              row.child(
+                div()
+                  .id(`discuss-${q.id}`)
+                  .px(10)
+                  .py(4)
+                  .rounded(6)
+                  .cursor_pointer()
+                  .text_size(TEXT.small)
+                  .text_color(t.dim)
+                  .hover((s) => s.bg(t.hover).text_color(t.foreground))
+                  .on_click((_e, cx) => this.discuss(doc, q, cx))
+                  .child("Discuss in chat"),
+              ),
+            ),
+        ),
+      )
+      .when(Boolean(q.rec), (el) => el.child(div().pl(26).text_size(TEXT.label).text_color(t.dim).child(`Recommended: ${q.rec}`)));
+  }
+
+  decisionHistory(doc, tab, t) {
+    const pad = (n) => String(n).padStart(2, "0");
+    const when = (iso) => {
+      const at = new Date(iso);
+      if (Number.isNaN(at.getTime())) return "";
+      const day = at.toDateString() !== new Date().toDateString() ? `${at.getDate()}/${at.getMonth() + 1} ` : "";
+      return `${day}${pad(at.getHours())}:${pad(at.getMinutes())}`;
+    };
+    return v_flex()
+      .id("decision-history")
+      .flex_1()
+      .min_h(0)
+      .overflow_y_scrollbar()
+      .px(18)
+      .py(14)
+      .gap(12)
+      .children(
+        tab.decisions.map((q) =>
+          v_flex()
+            .id(`decided-${q.id}`)
+            .gap(4)
+            .pb(12)
+            .border_b(1)
+            .border_color(t.border)
+            .child(
+              h_flex()
+                .gap(8)
+                .items_start()
+                .child(div().flex_none().pt(1).text_size(TEXT.label).font_semibold().text_color(t.dim).child(q.id))
+                .child(div().flex_1().min_w(0).text_color(t.muted).child(TextView.markdown(`h-${doc.id}-${q.id}`, q.question))),
+            )
+            .child(div().pl(26).text_size(TEXT.body).font_semibold().text_color(t.foreground).child(`→ ${q.answered.answer}`))
+            .child(
+              div()
+                .pl(26)
+                .text_size(TEXT.label)
+                .text_color(t.dim)
+                .child(`${q.answered.via === "panel" ? "Answered here" : q.discussing ? "Decided in the chat discussion" : "Answered in chat"} · ${when(q.answered.at)}`),
+            ),
+        ),
+      );
+  }
+
+  // Answering and "Discuss in chat" both record on q in decisions.json, then tell the cockpit.
+  // Not delivered: the change is undone, so the question is as it was.
+  answer(doc, q, answer, cx) {
+    this.toCockpit(doc, q, { answered: { answer, at: new Date().toISOString(), via: "panel" } }, `DECISION ${doc.id} ${q.id}: ${answer}`, cx);
+  }
+
+  discuss(doc, q, cx) {
+    this.toCockpit(doc, q, { discussing: { at: new Date().toISOString() } }, `DISCUSS ${doc.id} ${q.id}`, cx);
+  }
+
+  toCockpit(doc, q, change, message, cx) {
+    const cockpit = props()?.cockpit_terminal;
+    if (!cockpit) {
+      notify({ title: "No cockpit to send it to", body: "This panel isn't connected to a cockpit. Use the cockpit's chat instead.", level: "warning" });
+      return;
+    }
+    const key = `${doc.id}/${q.id}`;
+    const path = `${doc.folder}/decisions.json`;
+    // apply(d) changes the decision on disk; false when it's gone or already answered.
+    const edit = async (apply) => {
+      const raw = await readTextFile(path);
+      const data = JSON.parse(raw ?? '{"decisions":[]}');
+      const d = data.decisions?.find((x) => x.id === q.id);
+      if (!d || apply(d) === false) return false;
+      await writeTextFile(path, `${JSON.stringify(data, null, 2)}\n`, raw);
+      return true;
+    };
+    this.sending ??= new Set();
+    this.sending.add(key);
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const saved = await edit((d) => (d.answered ? false : void Object.assign(d, change))).catch(() => false);
+      if (saved) {
+        await this.load();
+        cx.notify();
+        // hc send waits for a draft the owner is typing in the cockpit, so it never clobbers it.
+        const sent = await exec("hc", ["send", cockpit, message], { timeout: 600000 }).catch(() => null);
+        if (sent?.code !== 0) {
+          await edit((d) => void Object.keys(change).forEach((k) => delete d[k])).catch(() => false);
+          notify({ title: "Couldn't reach the cockpit", body: `${q.id} is as it was.`, level: "error" });
+        }
+      }
+      this.sending.delete(key);
+      await this.load();
+      cx.notify();
+    });
+  }
+
   bar(t) {
     return h_flex().flex_none().px(8).py(6).gap(2).items_center().border_b(1).border_color(t.border).overflow_x_hidden();
   }
@@ -239,7 +424,7 @@ export default class CockpitPanel extends View {
             )
             .when(Boolean(d.handled) && !narrow, (el) => el.child(this.handledBadge(d, t, true)))
             .when(!d.handled, (el) =>
-              el.child(div().flex_none().text_size(TEXT.label).text_color(t.dim).child(d.tabs.map((x) => this.progress(x)).join(""))),
+              el.child(div().flex_none().text_size(TEXT.label).text_color(t.dim).child(d.tabs.filter((x) => !x.view).map((x) => this.progress(x)).join(""))),
             ),
         )
         .when(!narrow, (el) => el.child(div().truncate().text_size(TEXT.label).text_color(t.dim).child(d.title)));
@@ -287,6 +472,11 @@ export default class CockpitPanel extends View {
         .when(Boolean(doc.kind), (el) => el.child(div().flex_none().ml(6).text_size(TEXT.label).text_color(t.dim).child(doc.kind))),
     );
 
+    if (tab.view) {
+      main.child(tab.view === "open" ? this.openQuestions(doc, tab, t) : this.decisionHistory(doc, tab, t));
+      root.child(main);
+      return root;
+    }
     const pending = (tab.text.match(PENDING) ?? []).length;
     const body = tab.text.replace(COMMENT, "").trim();
     if (pending)

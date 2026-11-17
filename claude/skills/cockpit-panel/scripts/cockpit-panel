@@ -10,6 +10,11 @@
 #                                                   replacing a plain panel that's already open
 #   cockpit-panel handled <slug> approved|changes-requested|commented|clear [--into <tab-id>]
 #                                                   mark a doc as acted on (the panel shows it in the doc's bar)
+#   cockpit-panel decision add <slug> <question> [--option <label>]... [--rec <n>] [--context <text>] [--into <tab-id>]
+#                                                   ask the owner in the doc's Decisions tab; prints its id (D1, D2, ...)
+#   cockpit-panel decision answer <slug> <id> <answer> [--into <tab-id>]
+#                                                   record an answer given in chat (the panel records its own)
+#   cockpit-panel decision list <slug> [--into <tab-id>]  the doc's decisions, JSON
 #   cockpit-panel where                                  print this tab's docs folder
 #   cockpit-panel ids                                    print this terminal's space, tab, pane and terminal ids
 #   cockpit-panel pane                                   print the docs panel's pane id, if known
@@ -141,5 +146,53 @@ case "${1:-}" in
       'if $s == "clear" then del(.handled) else .handled = {state: $s, at: $at} end' \
       "$doc/doc.json" > "$doc/doc.json.tmp" && mv "$doc/doc.json.tmp" "$doc/doc.json"
     echo "$slug: ${state}" ;;
-  *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  decision)
+    shift
+    sub=${1:-}; [ $# -gt 0 ] && shift
+    into=${COCKPIT_PANEL_INTO:-} rec="" context=""
+    options=() args=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --into) into=${2:?--into needs a tab id}; shift 2 ;;
+        --option) options+=("${2:?--option needs a label}"); shift 2 ;;
+        --rec) rec=${2:?--rec needs an option number}; shift 2 ;;
+        --context) context=${2:?--context needs text}; shift 2 ;;
+        *) args+=("$1"); shift ;;
+      esac
+    done
+    [ ${#args[@]} -ge 1 ] || die "usage: cockpit-panel decision add|answer|list <slug> ..."
+    if [ -n "$into" ]; then
+      [[ "$into" =~ ^[A-Za-z0-9_-]+$ ]] || die "bad tab id '$into'"
+      DIR="$DOCS/$into"
+    else
+      locate
+    fi
+    doc="$DIR/${args[0]}"
+    [ -f "$doc/doc.json" ] || die "no doc $doc"
+    file="$doc/decisions.json"
+    [ -f "$file" ] || echo '{"decisions":[]}' > "$file"
+    at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    case "$sub" in
+      add)
+        [ ${#args[@]} -eq 2 ] || die "usage: cockpit-panel decision add <slug> <question> [--option <label>]... [--rec <n>] [--context <text>]"
+        opts='[]'
+        [ ${#options[@]} -eq 0 ] || opts=$(printf '%s\n' "${options[@]}" | jq -R . | jq -sc .)
+        [ -z "$rec" ] || [[ "$rec" =~ ^[0-9]+$ && "$rec" -ge 1 && "$rec" -le ${#options[@]} ]] || die "--rec must be an option number, 1 to ${#options[@]}"
+        id=$(jq -r '"D\((.decisions | length) + 1)"' "$file")
+        jq --arg id "$id" --arg q "${args[1]}" --arg c "$context" --argjson o "$opts" --arg rec "$rec" --arg at "$at" \
+          '.decisions += [{id: $id, question: $q, context: (if $c == "" then null else $c end), options: $o,
+                           rec: (if $rec == "" then null else $o[($rec | tonumber) - 1] end), asked_at: $at}]' \
+          "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+        echo "$id" ;;
+      answer)
+        [ ${#args[@]} -eq 3 ] || die "usage: cockpit-panel decision answer <slug> <id> <answer>"
+        jq -e --arg id "${args[1]}" '.decisions | any(.id == $id)' "$file" >/dev/null || die "no decision ${args[1]} in ${args[0]}"
+        jq --arg id "${args[1]}" --arg a "${args[2]}" --arg at "$at" \
+          '.decisions |= map(if .id == $id then .answered = {answer: $a, at: $at, via: "chat"} else . end)' \
+          "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+        echo "${args[1]}: answered" ;;
+      list) jq '.decisions' "$file" ;;
+      *) die "usage: cockpit-panel decision add|answer|list <slug> ..." ;;
+    esac ;;
+  *) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
