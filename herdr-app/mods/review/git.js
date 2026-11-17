@@ -1,6 +1,6 @@
 // Review's git reads, and the parsing that turns their output into files, rows and a tree.
-// No Herdr imports: main.js hands in git(args) (run in the repo's top folder) and read(path)
-// (a file there), so node can run this against a real repo too.
+// No Herdr imports: main.js hands in git(args) (run in the repo's top folder), read(path)
+// (a file there) and pause() (a yield to the host), so node can run this against a real repo too.
 
 // Reads write nothing under .git (no index refresh or lock, no fsmonitor cookie):
 // the folder watch would see it, and every refresh would start the next one.
@@ -91,7 +91,7 @@ export async function commits(git, range) {
 // One view's files, in path order. spec: {sha} for one commit, else {from}: the work tree
 // (and untracked files) against that commit, or against nothing when it's null. Over
 // CAP.changed lines it returns only the counts, as {big: {files, add, del}}.
-export async function changes(git, read, spec) {
+export async function changes(git, read, spec, pause) {
   const [cmd, ...opts] = spec.sha ? ["show", "--format=", "--diff-merges=first-parent"] : ["diff"];
   const rev = spec.sha ?? spec.from ?? EMPTY_TREE;
   const run = async (more) => {
@@ -107,7 +107,7 @@ export async function changes(git, read, spec) {
     big.del += Number(del) || 0;
   }
   if (big.add + big.del > CAP.changed) return { files: [], limited: false, big };
-  const files = parsePatch(await run(DIFF));
+  const files = await parsePatch(await run(DIFF), pause);
   const total = files.length + paths.length;
   for (const path of paths.slice(0, Math.max(0, CAP.files - files.length))) files.push(await untracked(path, read));
   files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
@@ -141,10 +141,16 @@ function headerPath(line) {
   return rest.slice(2, 2 + (rest.length - 5) / 2);
 }
 
-export function parsePatch(text) {
+// Herdr ends a task that runs JS for about 0.5 s without yielding (silently: no throw, no
+// finally), and a big patch takes seconds there, so it pauses every 50 ms.
+export async function parsePatch(text, pause = async () => {}) {
   const files = [];
-  let file = null;
+  let file = null, n = 0, since = Date.now();
   for (const line of text.split("\n")) {
+    if (++n % 500 === 0 && Date.now() - since > 50) {
+      await pause();
+      since = Date.now();
+    }
     if (line.startsWith("diff --git ")) {
       if (file) files.push(finish(file));
       file = { path: headerPath(line), from: null, status: "M", add: 0, del: 0, lines: [], note: null };

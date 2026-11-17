@@ -17,6 +17,7 @@ const HEADER = 32;
 const LEFT = 260;
 const SCOPES = { uncommitted: "Uncommitted", branch: "Branch", commit: "Commit" };
 const KEEP_DAYS = 30;
+const STUCK = 45000; // a load running this long was ended by Herdr (see parsePatch)
 
 const expand = (path) => (path?.startsWith("~/") ? `${home()}${path.slice(1)}` : path);
 const basename = (path) => path.split("/").filter(Boolean).at(-1) ?? path;
@@ -100,13 +101,15 @@ export default class Review extends View {
 
   // One load at a time; a refresh asked for meanwhile runs once it's done. Loading shows only
   // until a view's first load ends (this.shown), so loads in the background never hide it.
+  // A task Herdr ends runs neither catch nor finally: past STUCK, the next refresh starts over.
   refresh(cx) {
-    if (this.loading) {
+    if (this.loading && Date.now() - this.loading < STUCK) {
       this.again = true;
       return;
     }
-    this.loading = true;
-    this.again = false;
+    if (this.loading) this.fail("Review stopped loading", "Herdr ended the last load before it finished; trying again.");
+    const run = (this.run ?? 0) + 1;
+    Object.assign(this, { run, loading: Date.now(), again: false });
     const view = this.view();
     cx.spawn(async (cx) => {
       try {
@@ -114,6 +117,7 @@ export default class Review extends View {
       } catch (e) {
         if (view === this.view()) this.fail("Git failed", String(e?.message ?? e));
       } finally {
+        if (run !== this.run) return;
         this.loading = false;
         this.layout();
         cx.notify();
@@ -147,6 +151,7 @@ export default class Review extends View {
     const on = origin.on;
     const git = (args) => exec("git", [...READ, ...args], { cwd: root, on });
     const read = (path) => readTextFile(`${root}/${path}`, { on });
+    const pause = () => cx.sleep(0);
     const repo = await info(git, props()?.base, this.base);
     const scope = this.scope in SCOPES ? this.scope : repo.head && repo.base && (repo.ahead > 0 || repo.branch !== repo.base.replace(/^origin\//, "")) ? "branch" : "uncommitted";
 
@@ -156,9 +161,9 @@ export default class Review extends View {
     let sha = list.some((c) => c.sha === this.commit) ? this.commit : null;
     if (scope === "commit") sha ??= list[0]?.sha ?? null;
     let result = { files: [], limited: false, big: null };
-    if (sha) result = await changes(git, read, { sha });
-    else if (scope === "uncommitted") result = await changes(git, read, { from: repo.head });
-    else if (scope === "branch" && repo.mergeBase) result = await changes(git, read, { from: repo.mergeBase });
+    if (sha) result = await changes(git, read, { sha }, pause);
+    else if (scope === "uncommitted") result = await changes(git, read, { from: repo.head }, pause);
+    else if (scope === "branch" && repo.mergeBase) result = await changes(git, read, { from: repo.mergeBase }, pause);
 
     const store = `${home()}/.herdr/reviews/${basename(root)}-${hash(`${on ?? ""}:${root}`)}.json`;
     const marks = parseStore(await readTextFile(store).catch(() => null)).viewed;
