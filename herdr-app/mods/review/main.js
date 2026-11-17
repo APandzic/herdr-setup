@@ -13,6 +13,7 @@ import { READ, CAP, info, commits, changes, tree, hash } from "./git.js";
 
 const TEXT = { badge: 10, label: 11.5, small: 12, body: 13 };
 const ROW = 20;
+const TREE_ROW = 26;
 const HEADER = 32;
 const LIST_MAX = 10000; // sizes a virtual list takes at most
 const LEFT = 260;
@@ -242,7 +243,7 @@ export default class Review extends View {
       const files = listed.filter((f) => f.status === g.status);
       const count = this.files.filter((f) => f.status === g.status).length;
       return files.length ? [{ kind: "group", name: g.title, count }, ...tree(files)] : [];
-    });
+    }).map((r, i) => ({ ...r, key: r.kind === "file" ? `f:${r.file.path}` : `${r.kind}:${i}` }));
   }
 
   // From a file's header (jump: on to the next unviewed file) or from its check in the tree.
@@ -520,13 +521,15 @@ export default class Review extends View {
       );
   }
 
+  // A virtual list: a branch's tree runs to well over a thousand rows, more than one render
+  // gets done in before Herdr ends it. Its rows can't hold handlers, so where the press landed
+  // (pressX) tells a click on a file's check from one on the rest of its row.
   treeView(t) {
-    const row = (r, i) => {
+    const row = (r) => {
       if (r.kind === "group")
         return h_flex()
-          .id(`group-${r.name}`)
+          .h(TREE_ROW)
           .flex_none()
-          .h(26)
           .px(6)
           .pt(4)
           .items_center()
@@ -536,45 +539,66 @@ export default class Review extends View {
           .text_color(t.dim)
           .child(r.name.toUpperCase())
           .child(String(r.count));
-      const indent = h_flex().h(26).flex_none().gap(7).items_center().pl(6 + r.depth * 14).pr(6).rounded(6);
-      if (r.kind === "dir") return indent.id(`dir-${i}`).text_color(t.muted).child(div().min_w(0).truncate().child(r.name));
+      const indent = h_flex().h(TREE_ROW).flex_none().gap(7).items_center().pl(6 + r.depth * 14).pr(6).rounded(6);
+      if (r.kind === "dir") return indent.text_color(t.muted).child(div().min_w(0).truncate().child(r.name));
       const f = r.file;
       const seen = this.seen(f);
       return indent
-        .id(`file-${f.path}`)
         .cursor_pointer()
         .hover((s) => s.bg(t.hover))
-        .on_click((_e, cx) => {
-          if (folded(f) && !this.open.has(f.path)) {
-            this.open.add(f.path);
-            this.layout();
-          }
-          if (this.index[f.path] !== undefined) this.list.scroll_to_item(this.index[f.path], "top");
-          cx.notify();
-        })
-        .child(
-          div()
-            .id(`view-${f.path}`)
-            .flex_none()
-            .on_click((_e, cx) => {
-              cx.stop_propagation();
-              this.toggle(f, false, cx);
-            })
-            .child(this.checkbox(seen, t)),
-        )
+        .child(this.checkbox(seen, t))
         .child(div().flex_none().w(10).text_size(TEXT.label).text_color(this.statusColor(f.status, t)).child(f.status))
         .child(div().flex_1().min_w(0).truncate().text_color(seen ? t.muted : t.foreground).child(r.name))
         .child(this.stat(f, t));
     };
     return v_flex()
-      .id("review-tree")
       .flex_1()
       .min_h(0)
-      .p(6)
-      .overflow_y_scrollbar()
-      .text_size(TEXT.small)
-      .children(this.treeRows.map(row))
-      .when(Boolean(this.limited), (el) => el.child(div().p(6).text_size(TEXT.label).text_color(t.dim).child("Showing the first 1,000 changed files")));
+      .child(
+        div()
+          .flex_1()
+          .min_h(0)
+          .relative()
+          .child(
+            div()
+              .id("review-tree-area")
+              .size_full()
+              .px(6)
+              .text_size(TEXT.small)
+              .on_mouse_down("left", (e) => {
+                this.pressX = e.local_position?.x ?? null;
+              })
+              .child(
+                v_virtual_list(
+                  "review-tree",
+                  this.treeRows.length,
+                  this.treeRows.map(() => TREE_ROW),
+                  (i) => this.treeRows[i].key,
+                  (range) => this.treeRows.slice(range.start, range.end).map(row),
+                )
+                  .on_item_click((key, cx) => this.clickTree(key, cx))
+                  .size_full(),
+              ),
+          )
+          .child(Scrollbar.vertical("review-tree").viewport_from_layout().absolute().inset_0()),
+      )
+      .when(Boolean(this.limited), (el) => el.child(div().flex_none().p(12).text_size(TEXT.label).text_color(t.dim).child("Showing the first 1,000 changed files")));
+  }
+
+  // A file's check (6 px of list padding and 6 of row padding in, 14 wide, a little slack) toggles
+  // Viewed; the rest of its row jumps to its diff, opening a new or deleted one.
+  clickTree(key, cx) {
+    const r = this.treeRows.find((x) => x.key === key);
+    if (r?.kind !== "file") return;
+    const f = r.file;
+    const x = (this.pressX ?? -100) - 12 - r.depth * 14;
+    if (x >= -4 && x <= 18) return this.toggle(f, false, cx);
+    if (folded(f) && !this.open.has(f.path)) {
+      this.open.add(f.path);
+      this.layout();
+    }
+    if (this.index[f.path] !== undefined) this.list.scroll_to_item(this.index[f.path], "top");
+    cx.notify();
   }
 
   commitList(t) {
