@@ -1,0 +1,75 @@
+#!/bin/bash
+# cockpit-rules: tells a running cockpit when its rule files change.
+#   cockpit-rules register <file>...   the cockpit's rule files, for this terminal ($HC_TERMINAL_ID)
+#   cockpit-rules check                the UserPromptSubmit hook (install.sh adds it to ~/.claude/settings.json):
+#                                      reads the hook's JSON on stdin; when a registered file changed or is
+#                                      missing, adds a note naming it to the prompt, once per change
+# State: ~/.herdr/cockpit-rules/<terminal> ("<sha256|missing> <path>" lines) and <terminal>.session.
+# The first check after register binds the terminal to that Claude session; other sessions there get nothing.
+
+DIR="$HOME/.herdr/cockpit-rules"
+
+die() { echo "cockpit-rules: $*" >&2; exit 1; }
+
+# fingerprint <file>...: "<sha256> <file>" per file, "missing <file>" for one that can't be read
+fingerprint() {
+  local f
+  for f in "$@"; do
+    if [ -f "$f" ] && [ -r "$f" ]; then printf '%s %s\n' "$(shasum -a 256 < "$f" | cut -c1-64)" "$f"
+    else printf 'missing %s\n' "$f"; fi
+  done
+}
+
+register() {
+  set -euo pipefail
+  [ -n "${HC_TERMINAL_ID:-}" ] || die "HC_TERMINAL_ID is not set (not running inside Herdr)"
+  [ $# -gt 0 ] || die "usage: cockpit-rules register <file>..."
+  local files=() f
+  for f in "$@"; do
+    [ -f "$f" ] || die "no such file: $f"
+    case "$f" in /*) files+=("$f") ;; *) files+=("$PWD/$f") ;; esac
+  done
+  mkdir -p "$DIR"
+  fingerprint "${files[@]}" > "$DIR/$HC_TERMINAL_ID.tmp"
+  mv "$DIR/$HC_TERMINAL_ID.tmp" "$DIR/$HC_TERMINAL_ID"
+  rm -f "$DIR/$HC_TERMINAL_ID.session"
+  echo "Registered ${#files[@]} rule files for $HC_TERMINAL_ID"
+}
+
+check() {
+  local input; input=$(cat)
+  [ -n "${HC_TERMINAL_ID:-}" ] || return 0
+  local state="$DIR/$HC_TERMINAL_ID"
+  [ -f "$state" ] || return 0
+
+  local session=""
+  [[ "$input" =~ \"session_id\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]] && session=${BASH_REMATCH[1]}
+  [ -n "$session" ] || return 0
+  if [ -f "$state.session" ]; then
+    [ "$(cat "$state.session")" = "$session" ] || return 0
+  else
+    printf '%s\n' "$session" > "$state.session"
+  fi
+
+  local files=() changed=() hash path new
+  while read -r hash path; do
+    [ -n "$path" ] || continue
+    files+=("$path")
+    new=$(fingerprint "$path")
+    [ "$new" = "$hash $path" ] || changed+=("$path")
+  done < "$state"
+  [ ${#changed[@]} -gt 0 ] || return 0
+
+  fingerprint "${files[@]}" > "$state.tmp" && mv "$state.tmp" "$state"
+  local list; list=$(printf -- '- %s\n' "${changed[@]}")
+  jq -n --arg list "$list" '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext:
+    ("These cockpit rule files changed (or are missing) since you last read them:\n" + $list
+     + "\nPer the cockpit engine (ENGINE.md §1), re-read each of them in full before acting on this prompt, apply them to the current round, and tell the owner in one line what changed.")}}'
+}
+
+case "${1:-}" in
+  register) shift; register "$@" ;;
+  # A hook must never block or fail a prompt: errors are swallowed and the exit is always 0.
+  check) check 2>/dev/null; exit 0 ;;
+  *) die "usage: cockpit-rules register <file>... | check" ;;
+esac
