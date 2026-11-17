@@ -7,6 +7,7 @@
 #   herdr-mods/<name>/          → ~/.config/herdr-mods/<name>/        (mod data such as cockpit-panel templates)
 #   claude/skills/<name>/       → ~/.claude/skills/<name>             (symlinked, so a git pull updates them)
 #   bin/<command>               → ~/.local/bin/<command>              (symlinked)
+#   cockpit-rules check         → ~/.claude/settings.json             (UserPromptSubmit hook, added once)
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
@@ -74,6 +75,24 @@ for src in "$REPO"/bin/*; do
   ln -s "$src" "$dest"; echo "  $name → linked"
 done
 case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "  Note: add ~/.local/bin to your PATH" ;; esac
+
+echo "Claude Code hook"
+CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+HOOK="$HOME/.local/bin/cockpit-rules check"
+if [ -f "$CLAUDE_SETTINGS" ] && ! jq empty "$CLAUDE_SETTINGS" 2>/dev/null; then
+  echo "  Note: $CLAUDE_SETTINGS isn't valid JSON; add the UserPromptSubmit hook '$HOOK' yourself."
+elif [ -f "$CLAUDE_SETTINGS" ] && jq -e --arg c "$HOOK" '[.hooks.UserPromptSubmit[]?.hooks[]?.command] | any(. == $c)' "$CLAUDE_SETTINGS" >/dev/null; then
+  echo "  cockpit-rules (in settings)"
+else
+  backup "$CLAUDE_SETTINGS"
+  mkdir -p "$(dirname "$CLAUDE_SETTINGS")"
+  [ -f "$CLAUDE_SETTINGS" ] || echo '{}' > "$CLAUDE_SETTINGS"
+  # Written in place, so a symlinked settings.json stays a symlink.
+  jq --arg c "$HOOK" '.hooks.UserPromptSubmit += [{hooks: [{type: "command", command: $c, timeout: 5}]}]' \
+    "$CLAUDE_SETTINGS" > "$CLAUDE_SETTINGS.tmp"
+  cat "$CLAUDE_SETTINGS.tmp" > "$CLAUDE_SETTINGS"; rm -f "$CLAUDE_SETTINGS.tmp"
+  echo "  cockpit-rules → added to $CLAUDE_SETTINGS"
+fi
 
 [ -d "$BACKUP" ] && echo "Replaced files were backed up to $BACKUP"
 for old in better-sidebar better-config; do
