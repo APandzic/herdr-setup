@@ -52,7 +52,7 @@ Parse the invocation into tasks and modifiers:
 
 If no tasks were given: fill the inbox as §1 says when the cockpit skill can list candidates, or say the inbox is ready; then wait for Start (§10) or tasks named in chat.
 
-Give each task a worker name: a lowercased key or number (`pr-1234`, `rum-88`), or a two-word slug for free-form text. Names match `[a-z][a-z0-9-]{0,31}` and are unique in this round.
+Give each task a worker name: a lowercased key or number (`pr-1234`, `abc-123`), or a two-word slug for free-form text. Names match `[a-z][a-z0-9-]{0,31}` and are unique in this round.
 
 ## 4. Launch one worker per task
 

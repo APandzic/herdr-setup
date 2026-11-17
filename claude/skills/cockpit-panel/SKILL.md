@@ -42,7 +42,7 @@ If a doc for the same subject already exists in this tab (`ls "$(TD where)"`), f
 ~/.claude/skills/cockpit-panel/scripts/cockpit-panel new <kind> <slug> "<title>"
 ```
 
-- `slug`: lowercase letters, digits and dashes, e.g. `pr-1234-review`, `rum-88-plan`.
+- `slug`: lowercase letters, digits and dashes, e.g. `pr-1234-review`, `abc-123-plan`.
 - `title`: what the panel shows, e.g. `PR #1234: Add webhook retry`.
 
 This copies the templates into the doc, opens the panel to the right of your pane (only if this tab doesn't have one yet), and prints each tab's title and file path. If the user says they closed the panel and want it back: `TD open --force`.
