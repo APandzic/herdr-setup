@@ -79,7 +79,7 @@ Open it:
 - `review [folder] [--base <branch>] [--scope uncommitted|branch|commit]`: as a new tab (default: the current folder).
 - **Review diff** in a worker's doc in the Cockpit Panel: that worker's worktree and branch, as a tab. The code cockpit points you to it before it asks whether to merge.
 
-Branch compares with `--base`, else origin's default branch, else `main` or `master`; of a branch and `origin/<it>`, it takes the local one only when it holds everything origin's has (a stale local `main` would pull in every commit it's missing). Click the base in the header to pick another (origin's and the local `main`, `master`, `dev`, `develop`); that copy of Review keeps it. The header also shows the folder Review is looking at.
+Branch compares with `--base`, else origin's default branch, else `main` or `master`; of a branch and `origin/<it>`, it takes the local one only when it holds everything origin's has (a stale local `main` would pull in every commit it's missing). Click the base in the header to pick another (origin's and the local `main`, `master`, `dev`, `develop`); Review keeps the base and scope you pick for that folder. The header also shows the folder Review is looking at.
 
 Review never sits on *Loading*: it says when there's nothing to show (*No uncommitted changes*), when the folder isn't a git repository, and what git said when it fails. A view over 100,000 changed lines shows only its counts; Branch lists its latest 200 commits. Feedback, approving and merging go through the cockpit's chat; Review never changes the repo.
 
