@@ -17,6 +17,7 @@ My [Herdr app](https://herdr.dev/) setup and the Claude Code skills that go with
 | `claude/skills/herdr-code-cockpit` | Work many tickets in parallel, following the repo's own workflow, plans in the cockpit's panel. |
 | `claude/skills/_cockpit-engine` | Shared mechanics for both cockpits (not a skill on its own). |
 | `bin/cockpit-task` | The inbox helper scripts call to add tasks; installed to `~/.local/bin`. |
+| `bin/cockpit-rules` | Tells a running cockpit when its rule files changed (a Claude Code prompt hook); installed to `~/.local/bin`. |
 | `examples/github-new-prs.sh` | Example watcher: puts open PRs (not yours, not drafts) into the inbox. |
 
 ## Install on a machine
@@ -29,7 +30,7 @@ git clone <this repo> ~/Development/private-github/herdr-setup
 herdr-app do layout.switch '{"name":"my-main"}'
 ```
 
-`install.sh` copies the mods, layouts, settings and templates into place and symlinks the skills into `~/.claude/skills/`. Whatever it replaces goes to `~/.herdr-setup-backups/<time>/` first. Run it again after every `git pull`.
+`install.sh` copies the mods, layouts, settings and templates into place, symlinks the skills into `~/.claude/skills/` and adds one prompt hook to `~/.claude/settings.json` (see below). Whatever it replaces goes to `~/.herdr-setup-backups/<time>/` first. Run it again after every `git pull`.
 
 ## Cockpit scripts and the inbox
 
@@ -82,6 +83,10 @@ It pulls only when that's safe, and otherwise stops without changing anything, t
 | This machine has commits GitHub doesn't | Push them, then update |
 
 Skills update the moment the repo is pulled (they're symlinks); mods, layouts, settings and templates once `install.sh` has run, which `update.sh` does for you.
+
+## Cockpits pick up rule changes
+
+A cockpit reads its rules (the cockpit skill, the cockpit engine, the panel skill) once, when it starts, and registers them with `cockpit-rules`. Before each prompt you send it, a hook checks whether any of them changed since (by content, so uncommitted edits count too). If so, that prompt tells the cockpit which files changed; it re-reads them, applies them to the current round, and tells you in one line what changed. Nothing is needed from you after an update or an edit to the skills. Other Claude sessions aren't affected.
 
 ## Changed something in Herdr?
 
