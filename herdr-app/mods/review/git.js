@@ -108,6 +108,7 @@ export async function changes(git, read, spec, pause) {
   }
   if (big.add + big.del > CAP.changed) return { files: [], limited: false, big };
   const files = await parsePatch(await run(DIFF), pause);
+  await markWords(files, pause);
   const total = files.length + paths.length;
   for (const path of paths.slice(0, Math.max(0, CAP.files - files.length))) files.push(await untracked(path, read));
   files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
@@ -142,15 +143,22 @@ function headerPath(line) {
 }
 
 // Herdr ends a task that runs JS for about 0.5 s without yielding (silently: no throw, no
-// finally), and a big patch takes seconds there, so it pauses every 50 ms.
+// finally), and a big patch takes seconds there, so long loops call this, which pauses every 50 ms.
+function pacer(pause) {
+  let since = Date.now();
+  return async () => {
+    if (Date.now() - since < 50) return;
+    await pause();
+    since = Date.now();
+  };
+}
+
 export async function parsePatch(text, pause = async () => {}) {
   const files = [];
-  let file = null, n = 0, since = Date.now();
+  const tick = pacer(pause);
+  let file = null, n = 0;
   for (const line of text.split("\n")) {
-    if (++n % 500 === 0 && Date.now() - since > 50) {
-      await pause();
-      since = Date.now();
-    }
+    if (++n % 500 === 0) await tick();
     if (line.startsWith("diff --git ")) {
       if (file) files.push(finish(file));
       file = { path: headerPath(line), from: null, status: "M", add: 0, del: 0, lines: [], note: null };
@@ -203,6 +211,110 @@ export function diffRows(lines) {
     if (kind === " ") return { kind, old: old++, new: next++, text };
     return { kind: "", text: line };
   });
+}
+
+// A token is a run of word characters, a run of spaces, or one other character.
+const TOKEN = /\w+|\s+|[^\w\s]/g;
+// PAIR: the share of tokens a removed and an added line need in common to pair. Blocks over
+// BLOCK removed × added lines pair line for line; LCS tables over CELLS mark the middle whole.
+const WORDS = { PAIR: 0.5, BLOCK: 400, CELLS: 4096 };
+
+// In changed and renamed files, each removed line and the added line that replaces it get
+// row.words: the [start, end) ranges of their text that differ. Other lines get none.
+export async function markWords(files, pause = async () => {}) {
+  const tick = pacer(pause);
+  for (const file of files) {
+    if (file.status !== "M" && file.status !== "R") continue;
+    const rows = file.rows;
+    for (let i = 0; i < rows.length; ) {
+      if (rows[i].kind !== "-") {
+        i++;
+        continue;
+      }
+      const start = i;
+      while (rows[i]?.kind === "-") i++;
+      const mid = i;
+      while (rows[i]?.kind === "+") i++;
+      for (const [del, add] of pairs(rows.slice(start, mid), rows.slice(mid, i))) {
+        [del.words, add.words] = wordDiff(del.text, add.text);
+        await tick();
+      }
+      await tick();
+    }
+  }
+}
+
+// Each removed line with the most alike added line after the last one paired, so an inserted
+// line doesn't shift the pairs; past WORDS.BLOCK, line i with line i.
+function pairs(dels, adds) {
+  const bag = (row) => {
+    const counts = new Map();
+    let n = 0;
+    for (const token of row.text.match(TOKEN) ?? []) {
+      if (!token.trim()) continue;
+      counts.set(token, (counts.get(token) ?? 0) + 1);
+      n++;
+    }
+    return { counts, n };
+  };
+  const alike = (a, b) => {
+    let common = 0;
+    for (const [token, c] of a.counts) common += Math.min(c, b.counts.get(token) ?? 0);
+    return a.n + b.n ? (2 * common) / (a.n + b.n) : 0;
+  };
+  const bags = adds.map(bag);
+  const wide = dels.length * adds.length > WORDS.BLOCK;
+  const found = [];
+  let last = -1;
+  for (const [i, del] of dels.entries()) {
+    const d = bag(del);
+    let best = -1, score = 0;
+    for (let j = wide ? i : last + 1; j < (wide ? Math.min(i + 1, adds.length) : adds.length); j++) {
+      const s = alike(d, bags[j]);
+      if (s >= WORDS.PAIR && s > score) [best, score] = [j, s];
+    }
+    if (best < 0) continue;
+    found.push([del, adds[best]]);
+    last = best;
+  }
+  return found;
+}
+
+// The changed ranges of two lines: common tokens trimmed from both ends, then an LCS of the
+// tokens left. A changed indent alone isn't marked.
+function wordDiff(a, b) {
+  const x = a.match(TOKEN) ?? [], y = b.match(TOKEN) ?? [];
+  let p = 0, s = 0;
+  while (p < x.length && p < y.length && x[p] === y[p]) p++;
+  while (s < x.length - p && s < y.length - p && x[x.length - 1 - s] === y[y.length - 1 - s]) s++;
+  const n = x.length - p - s, m = y.length - p - s;
+  const same = (tokens, kept) => tokens.map((_, k) => k < p || k >= tokens.length - s || kept[k - p]);
+  const keptX = new Array(n).fill(false), keptY = new Array(m).fill(false);
+  if (n * m <= WORDS.CELLS) {
+    const w = m + 1, len = new Int32Array((n + 1) * w);
+    for (let i = n - 1; i >= 0; i--)
+      for (let j = m - 1; j >= 0; j--) len[i * w + j] = x[p + i] === y[p + j] ? len[(i + 1) * w + j + 1] + 1 : Math.max(len[(i + 1) * w + j], len[i * w + j + 1]);
+    for (let i = 0, j = 0; i < n && j < m; ) {
+      if (x[p + i] === y[p + j]) keptX[i++] = keptY[j++] = true;
+      else if (len[(i + 1) * w + j] >= len[i * w + j + 1]) i++;
+      else j++;
+    }
+  }
+  return [ranges(x, same(x, keptX)), ranges(y, same(y, keptY))];
+}
+
+// Changed tokens as [start, end) ranges, joined across the spaces between them.
+function ranges(tokens, same) {
+  const out = [];
+  let at = 0;
+  for (const [k, token] of tokens.entries()) {
+    const space = !token.trim();
+    const changed = !same[k] ? !(space && k === 0) : space && k > 0 && !same[k - 1] && k + 1 < tokens.length && !same[k + 1];
+    if (changed && out.length && out.at(-1)[1] === at) out.at(-1)[1] += token.length;
+    else if (changed) out.push([at, at + token.length]);
+    at += token.length;
+  }
+  return out;
 }
 
 // The file tree's rows: folders first, then files, by name; a folder holding only one

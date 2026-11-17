@@ -674,13 +674,29 @@ export default class Review extends View {
     if (row.kind === "note" || row.kind === "") return line.px(12).text_color(t.dim).child(row.text);
     const number = (n) => div().w(44).flex_none().pr(8).text_right().text_color(t.dim).child(n === undefined ? "" : String(n));
     if (row.quiet) return line.child(number(row.new)).child(div().flex_1().min_w(0).truncate().pl(8).child(row.text));
+    const tint = row.words ? "0c" : "18"; // a line paired with its replacement leaves the color to its changed words
     return line
-      .when(row.kind === "+", (el) => el.bg(`${t.ansi2}18`))
-      .when(row.kind === "-", (el) => el.bg(`${t.ansi1}18`))
+      .when(row.kind === "+", (el) => el.bg(`${t.ansi2}${tint}`))
+      .when(row.kind === "-", (el) => el.bg(`${t.ansi1}${tint}`))
       .child(number(row.old))
       .child(number(row.new))
       .child(div().w(16).flex_none().text_color(row.kind === "+" ? t.ansi2 : row.kind === "-" ? t.ansi1 : t.dim).child(row.kind === " " ? "" : row.kind))
-      .child(div().flex_1().min_w(0).truncate().child(row.text));
+      .child(row.words ? this.words(row, t) : div().flex_1().min_w(0).truncate().child(row.text));
+  }
+
+  // A paired line's text in spans, the words that differ from its pair strongly tinted.
+  words(row, t) {
+    const strong = `${row.kind === "+" ? t.ansi2 : t.ansi1}50`;
+    const span = (from, to) => div().flex_none().whitespace_nowrap().child(row.text.slice(from, to));
+    const spans = [];
+    let at = 0;
+    for (const [from, to] of row.words) {
+      if (from > at) spans.push(span(at, from));
+      spans.push(span(from, to).rounded(2).bg(strong));
+      at = to;
+    }
+    if (at < row.text.length) spans.push(span(at));
+    return h_flex().flex_1().min_w(0).overflow_hidden().children(spans);
   }
 
   // A changed or renamed file's header marks it viewed; a new or deleted one's opens or closes it.
