@@ -11,7 +11,7 @@ My [Herdr app](https://herdr.dev/) setup and the Claude Code skills that go with
 | `herdr-app/mods/my-sidebar` | The sidebar: spaces with their tabs and agents, an Agents list, footer, panel toggle. Forked from Better Sidebar. |
 | `herdr-app/mods/my-config` | A settings dialog for every mod that has settings. Forked from Better Config. |
 | `herdr-app/mods/my-usage` | Claude's plan limits (5-hour, weekly) above the sidebar's footer, Codex's too when you've used it. Modeled on Over9k Usage. |
-| `herdr-app/mods/cockpit-panel` | Cockpit Panel: a read-only markdown panel per Herdr tab, filled by agents from templates. In a cockpit it also has an Inbox tab: the project's scripts (start, stop, run) and the tasks they find. |
+| `herdr-app/mods/cockpit-panel` | Cockpit Panel: a read-only markdown panel per Herdr tab, filled by agents from templates. A doc's bar shows what the cockpit did with it (Approved, Merged, …) and has Remove (click twice) to delete it. In a cockpit it also has an Inbox tab: the project's scripts (start, stop, run) and the tasks they find. |
 | `herdr-mods/cockpit-panel/templates/` | The Cockpit Panel kinds: PR review, PR summary, task ticket, ticket plan. |
 | `claude/skills/cockpit-panel` | Skill + helper script for agents to create and fill Cockpit Panel. |
 | `claude/skills/herdr-review-cockpit` | Review many PRs in parallel, each worker using the repo's own review method, results in the cockpit's panel. |

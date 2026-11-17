@@ -2,7 +2,8 @@
 // props().dir is that tab's folder, ~/.herdr/docs/<tab-id>/. Each doc in it is a
 // folder with doc.json ({kind, title, created, handled?, tabs: [{id, title, file}]}) and one
 // .md per tab. A row of docs (when there's more than one), a row of the doc's tabs,
-// then the chosen tab rendered. Rereads when anything under the folder changes.
+// then the chosen tab rendered. Rereads when anything under the folder changes. The doc's bar
+// has Remove, which deletes the doc's folder after a second click.
 // Opened for a cockpit (props project and cockpit_terminal too), it has two top tabs:
 // Docs, and Inbox (the project's scripts and the tasks they find, inbox.js).
 // A doc with decisions.json (cockpit-panel decision) also gets Open questions, answered here with
@@ -145,9 +146,70 @@ export default class CockpitPanel extends View {
   pickDoc(id, cx) {
     this.doc = id;
     this.tab = null;
-    localStorage.setItem("doc", id);
+    this.armed = null;
+    if (id) localStorage.setItem("doc", id);
+    else localStorage.removeItem("doc");
     localStorage.removeItem("tab");
     cx.notify();
+  }
+
+  // Remove takes two clicks (gpui has no confirm dialog): the first arms it, and it disarms
+  // when the pointer leaves it or after 5 s.
+  removeButton(doc, t) {
+    const armed = this.armed === doc.id;
+    const red = t.blocked ?? t.accent;
+    return div()
+      .id(`remove-${doc.id}`)
+      .flex_none()
+      .ml(6)
+      .px(8)
+      .h(20)
+      .flex()
+      .items_center()
+      .rounded(5)
+      .cursor_pointer()
+      .text_size(TEXT.label)
+      .font_medium()
+      .when(armed, (el) => el.bg(`${red}26`).text_color(red))
+      .when(!armed, (el) => el.text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground)))
+      .tooltip(armed ? "Deletes this doc's folder" : "Remove this doc from Docs")
+      .on_hover((hovered, cx) => {
+        if (!hovered && this.armed === doc.id) {
+          this.armed = null;
+          cx.notify();
+        }
+      })
+      .on_click((_e, cx) => (this.armed === doc.id ? this.remove(doc, cx) : this.arm(doc, cx)))
+      .child(armed ? "Click again to remove" : "Remove");
+  }
+
+  arm(doc, cx) {
+    this.armed = doc.id;
+    this.disarm?.cancel();
+    this.disarm = cx.timer.after(5000, (cx) => {
+      if (this.armed !== doc.id) return;
+      this.armed = null;
+      cx.notify();
+    });
+    cx.notify();
+  }
+
+  // Moved to a hidden name first: load() lists only visible folders, so no reload sees it
+  // half-deleted. The shown doc hands over to its neighbour in the list.
+  remove(doc, cx) {
+    this.armed = null;
+    const name = doc.folder.slice(this.dir.length + 1);
+    if (!name || name.includes("/") || name.startsWith(".") || doc.folder !== `${this.dir}/${name}`) return;
+    const i = this.docs.indexOf(doc);
+    if (doc === this.current().doc) this.pickDoc((this.docs[i + 1] ?? this.docs[i - 1])?.id ?? null, cx);
+    this.docs = this.docs.filter((d) => d !== doc);
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await exec("/bin/sh", ["-c", 'gone="$1/.removed-$2-$$" && mv "$1/$2" "$gone" && rm -rf "$gone"', "sh", this.dir, name]).catch(() => null);
+      if (r?.code !== 0) notify({ title: "Couldn't remove the doc", body: `${doc.title} is still in Docs.`, level: "error" });
+      await this.load();
+      cx.notify();
+    });
   }
 
   pickTab(id, cx) {
@@ -470,7 +532,8 @@ export default class CockpitPanel extends View {
         .children(doc.tabs.map((x) => this.pill(`tab-${x.id}`, x.title, x === tab, x !== tab && unseen(x), (cx) => this.pickTab(x.id, cx), t)))
         .child(div().flex_1())
         .when(Boolean(doc.handled), (el) => el.child(this.handledBadge(doc, t)))
-        .when(Boolean(doc.kind), (el) => el.child(div().flex_none().ml(6).text_size(TEXT.label).text_color(t.dim).child(doc.kind))),
+        .when(Boolean(doc.kind), (el) => el.child(div().flex_none().ml(6).text_size(TEXT.label).text_color(t.dim).child(doc.kind)))
+        .child(this.removeButton(doc, t)),
     );
 
     if (tab.view) {
