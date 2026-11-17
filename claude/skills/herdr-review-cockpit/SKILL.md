@@ -66,6 +66,7 @@ Another host: ask the owner which CLI to use. If the CLI is missing or not logge
   ```
   Declined PRs stay out by themselves (`cockpit-task` skips them while they're declined).
 - Before writing the briefs, read each PR with the forge's "one PR", so the briefs and roster have titles, authors and branches.
+- Before launching any PR (Start worker or named in chat), check your verdict on it. Already approved: launch no worker, `cockpit-task close --key <key>` (never leave it `starting`), and say so in one line: `frontend #616: you already approved it. Closed it, no worker.` Approving is the end of a PR's review; only a new request from the owner in chat ("re-review 616") overrides it.
 
 ## Launch (ENGINE §4)
 - Workers review only: no worktree, no branch switching. Each works in the cockpit's folder and reads the PR through the forge's CLI (put its "one PR" and "its diff" commands in the brief) or the method's own way, without checking it out over the shared tree. If the repo's review method needs a checkout, follow the repo's worktree convention for it.
