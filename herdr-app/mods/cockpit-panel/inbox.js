@@ -337,37 +337,41 @@ export class Inbox {
       .child(div().text_size(TEXT.badge).text_color(t.dim).child(String(count)));
   }
 
-  // Size badge and the counts of lines added and removed and files. Null without the numbers.
+  // Size badge, lines added and removed, files, and how many reviewers are on it, at the right.
+  // Null when the task has none of these.
   stats(item, t) {
     const add = item.additions ?? 0;
     const del = item.deletions ?? 0;
-    if (item.additions == null && item.deletions == null && item.files == null) return null;
+    const sized = item.additions != null || item.deletions != null || item.files != null;
+    const reviewers = item.reviewers;
+    if (!sized && reviewers == null) return null;
+    const size = div()
+      .flex_none()
+      .px(4)
+      .h(15)
+      .flex()
+      .items_center()
+      .rounded(4)
+      .border_1()
+      .border_color(t.border)
+      .text_size(TEXT.badge)
+      .font_bold()
+      .text_color(t.muted)
+      .child(sizeOf(add + del));
+    const counts = h_flex()
+      .min_w(0)
+      .gap(4)
+      .text_size(TEXT.label)
+      .child(div().text_color(t.done).child(`+${add.toLocaleString("en")}`))
+      .child(div().text_color(t.blocked).child(`−${del.toLocaleString("en")}`))
+      .when(item.files != null, (el) => el.child(div().truncate().text_color(t.dim).child(`· ${item.files} ${item.files === 1 ? "file" : "files"}`)));
+    const label = reviewers === 0 ? "no reviewers" : `${reviewers} ${reviewers === 1 ? "reviewer" : "reviewers"}`;
     return h_flex()
       .gap(6)
       .items_center()
-      .child(
-        div()
-          .flex_none()
-          .px(4)
-          .h(15)
-          .flex()
-          .items_center()
-          .rounded(4)
-          .border_1()
-          .border_color(t.border)
-          .text_size(TEXT.badge)
-          .font_bold()
-          .text_color(t.muted)
-          .child(sizeOf(add + del)),
-      )
-      .child(
-        h_flex()
-          .min_w(0)
-          .gap(4)
-          .text_size(TEXT.label)
-          .child(div().text_color(t.done).child(`+${add.toLocaleString("en")}`))
-          .child(div().text_color(t.blocked).child(`−${del.toLocaleString("en")}`))
-          .when(item.files != null, (el) => el.child(div().truncate().text_color(t.dim).child(`· ${item.files} ${item.files === 1 ? "file" : "files"}`))),
+      .when(sized, (el) => el.child(size).child(counts))
+      .when(reviewers != null, (el) =>
+        el.child(div().flex_1()).child(div().flex_none().text_size(TEXT.label).text_color(t.dim).child(label)),
       );
   }
 

@@ -62,7 +62,7 @@ A script reports work with `cockpit-task`, so it can be written in anything:
 cockpit-task add --key pr-123 --title "PR #123: Add retry" --url https://… --task "Review PR #123"
 ```
 
-`add` prints `added`, `exists` (already in the inbox) or `declined` (declined recently), so scripts can simply report everything they see each time. Optional `--author`, `--opened`, `--branch`, `--additions`, `--deletions` and `--files` group the inbox by author and show each PR's age, branch and size; reporting them again keeps them current. In the panel each task gets **Start worker** (the cockpit launches a worker with the repo's own method) and **Decline**. State lives in `~/.herdr/cockpits/<project>-<hash>/` (`cockpit-task where`), never in the project.
+`add` prints `added`, `exists` (already in the inbox) or `declined` (declined recently), so scripts can simply report everything they see each time. Optional `--author`, `--opened`, `--branch`, `--additions`, `--deletions`, `--files` and `--reviewers` group the inbox by author and show each PR's age, branch, size and reviewer count; reporting them again keeps them current. In the panel each task gets **Start worker** (the cockpit launches a worker with the repo's own method) and **Decline**. State lives in `~/.herdr/cockpits/<project>-<hash>/` (`cockpit-task where`), never in the project.
 
 ## Updating
 

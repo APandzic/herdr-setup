@@ -2,7 +2,7 @@
 # cockpit-task: the inbox a project's cockpit scripts put tasks into.
 #   cockpit-task add --key <key> --title <title> [--url <url>] [--task <text>] [--source <script-id>]
 #                    [--author <name>] [--opened <unix seconds|ISO 8601>] [--branch <name>]
-#                    [--additions <n>] [--deletions <n>] [--files <n>]
+#                    [--additions <n>] [--deletions <n>] [--files <n>] [--reviewers <n>]
 #                                       prints added | exists | declined (declined less than decline_for ago)
 #                                       | started (a worker had it; it never comes back)
 #                                       the optional fields are refreshed on a task that already exists
@@ -54,13 +54,13 @@ write() {
 
 cmd=${1:-}; [ $# -gt 0 ] && shift
 key="" title="" url="" task="" source=${COCKPIT_SCRIPT:-manual} state="" worker=""
-author="" opened="" branch="" additions="" deletions="" files=""
+author="" opened="" branch="" additions="" deletions="" files="" reviewers=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --key) key=$2 ;; --title) title=$2 ;; --url) url=$2 ;; --task) task=$2 ;;
     --source) source=$2 ;; --state) state=$2 ;; --worker) worker=$2 ;;
     --author) author=$2 ;; --opened) opened=$2 ;; --branch) branch=$2 ;;
-    --additions) additions=$2 ;; --deletions) deletions=$2 ;; --files) files=$2 ;;
+    --additions) additions=$2 ;; --deletions) deletions=$2 ;; --files) files=$2 ;; --reviewers) reviewers=$2 ;;
     *) die "unknown option $1" ;;
   esac
   shift 2
@@ -74,8 +74,8 @@ case "$cmd" in
     need_key; [ -n "$title" ] || die "--title is required"
     # The optional fields that were given; numbers as numbers, --opened as unix seconds.
     meta=$(jq -nc --arg author "$author" --arg opened "$opened" --arg branch "$branch" \
-      --arg additions "$additions" --arg deletions "$deletions" --arg files "$files" '
-      {$author, $opened, $branch, $additions, $deletions, $files} | with_entries(select(.value != ""))
+      --arg additions "$additions" --arg deletions "$deletions" --arg files "$files" --arg reviewers "$reviewers" '
+      {$author, $opened, $branch, $additions, $deletions, $files, $reviewers} | with_entries(select(.value != ""))
       | with_entries(if .key == "author" or .key == "branch" then .
           elif .key == "opened" and (.value | test("^[0-9]+$") | not) then
             .value |= (try (sub("\\.[0-9]+"; "") | sub("\\+00:?00$"; "Z") | fromdateiso8601) catch null)
