@@ -11,8 +11,6 @@ const DIFF = ["--no-color", "--no-ext-diff", "--no-textconv", "-M", "-U3", "--sr
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 // changed: added + deleted lines above which a view isn't loaded (exec returns at most 8 MiB).
 export const CAP = { files: 1000, lines: 1500, chars: 4000, changed: 100000, commits: 200 };
-// What the base picker offers, those of them that exist.
-const BASES = ["main", "master", "dev", "develop"];
 
 const out = (r, args) => {
   if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim() || `git ${args[0]} failed (exit ${r.code})`);
@@ -31,20 +29,21 @@ export function hash(text) {
 }
 
 // Where HEAD is, the base it's compared with, and how far apart. The base: picked (as is), else
-// the freshest of want or origin/HEAD's branch.
+// the default (fallback): the freshest of want or origin/HEAD's branch.
 export async function info(git, want, picked) {
   const head = await quiet(git, ["rev-parse", "--verify", "-q", "HEAD"]);
   const branch = await quiet(git, ["symbolic-ref", "--short", "-q", "HEAD"]);
   const named = want || (await defaultBase(git));
+  const fallback = named && (await freshest(git, named));
   const kept = picked && (await quiet(git, ["rev-parse", "--verify", "-q", `${picked}^{commit}`])) ? picked : null;
-  const base = kept ?? (named && (await freshest(git, named)));
+  const base = kept ?? fallback;
   let mergeBase = null, ahead = 0, behind = 0;
   if (head && base) {
     mergeBase = await quiet(git, ["merge-base", base, "HEAD"]);
     const counts = await quiet(git, ["rev-list", "--left-right", "--count", `${base}...HEAD`]);
     if (counts) [behind, ahead] = counts.split(/\s+/).map(Number);
   }
-  return { head, branch, base, mergeBase, ahead, behind, bases: await bases(git, [named, base]) };
+  return { head, branch, base, fallback, mergeBase, ahead, behind };
 }
 
 // origin/HEAD's branch, else main or master.
@@ -65,14 +64,20 @@ async function freshest(git, name) {
   return (await quiet(git, ["rev-parse", "--verify", "-q", `${name}^{commit}`])) ? name : null;
 }
 
-// The picker's bases: origin's and the local ones of BASES, and the given ones.
-async function bases(git, given) {
-  const names = [...new Set([...given.filter(Boolean).map((b) => b.replace(/^origin\//, "")), ...BASES])];
-  const refs = names.flatMap((n) => [`refs/remotes/origin/${n}`, `refs/heads/${n}`]);
-  const found = ((await quiet(git, ["for-each-ref", "--format=%(refname)", ...refs])) ?? "").split("\n");
-  const list = refs.filter((r) => found.includes(r)).map((r) => r.replace(/^refs\/(heads|remotes)\//, ""));
-  for (const b of given) if (b && !list.includes(b)) list.unshift(b);
-  return list;
+// The base picker's list: every local branch and origin's, last committed to first, as
+// {name, at}; the given ones (the default, the base) on top, the branch under review (skip) left out.
+export async function branches(git, first, skip) {
+  const text = (await quiet(git, ["for-each-ref", "--sort=-committerdate", "--format=%(refname)%09%(committerdate:unix)", "refs/heads", "refs/remotes/origin"])) ?? "";
+  const all = text
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [ref, at] = line.split("\t");
+      return { name: ref.replace(/^refs\/(heads|remotes)\//, ""), at: Number(at) || 0 };
+    })
+    .filter((b) => b.name !== "origin/HEAD" && b.name !== skip);
+  const top = [...new Set(first.filter(Boolean))].map((name) => all.find((b) => b.name === name) ?? { name, at: 0 });
+  return [...top, ...all.filter((b) => !top.some((t) => t.name === b.name))];
 }
 
 // range: ["<merge-base>..HEAD"] for a branch, ["-n", "30", "HEAD"] for recent ones. At most CAP.commits.

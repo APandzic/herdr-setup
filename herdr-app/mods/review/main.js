@@ -7,19 +7,22 @@
 // kept in ~/.herdr/reviews/, keyed by a hash of each file's diff, so a file whose diff changes
 // comes back unviewed.
 import { View, div } from "gpui-kit";
-import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, Popover } from "gpui-base";
+import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, Popover, InputState, Input } from "gpui-base";
 import { spaces, panes, focused, props, exec, readTextFile, writeTextFile, watchFolder, theme, settings, home, checking } from "herdr";
-import { READ, CAP, info, commits, changes, tree, hash, rows as fileRows } from "./git.js";
+import { READ, CAP, info, branches, commits, changes, tree, hash, rows as fileRows } from "./git.js";
 
 const TEXT = { badge: 10, label: 11.5, small: 12, body: 13 };
 const ROW = 20;
 const TREE_ROW = 26;
+const MENU_ROW = 26;
+const MENU_ROWS = 12; // the base menu's height in rows
 const HEADER = 32;
 const LIST_MAX = 10000; // sizes a virtual list takes at most
 const LEFT = 260;
 const SCOPES = { uncommitted: "Uncommitted", branch: "Branch", commit: "Commit" };
 const KEEP_DAYS = 30;
 const STUCK = 45000; // a load running this long was ended by Herdr (see parsePatch)
+const FETCH_TIMEOUT = 120000;
 // The order files are listed and drawn in, by status: edits first, then what was only removed or added.
 const GROUPS = [
   { status: "M", title: "Changed" },
@@ -34,6 +37,21 @@ const tilde = (path) => (path.startsWith(`${home()}/`) ? `~${path.slice(home().l
 const markKey = (file) => `${file.path}\n${file.hash}`;
 // New and deleted files: one row in the diff until opened, so hundreds of them don't bury the edits.
 const folded = (file) => file.status === "A" || file.status === "D";
+const clock = (ms) => {
+  const d = new Date(ms);
+  return `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
+};
+const gitIn = (root, on) => (args) => exec("git", [...READ, ...args], { cwd: root, on });
+// How long ago a branch was committed to, in the base menu.
+const age = (at) => {
+  if (!at) return "";
+  const s = Date.now() / 1000 - at;
+  if (s < 3600) return `${Math.max(1, Math.floor(s / 60))}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  if (s < 86400 * 14) return `${Math.floor(s / 86400)}d`;
+  if (s < 86400 * 365) return `${Math.floor(s / 604800)}w`;
+  return `${Math.floor(s / 31536000)}y`;
+};
 
 function parseStore(raw) {
   try {
@@ -59,6 +77,19 @@ export default class Review extends View {
     this.open = new Set(); // paths of folded files opened in the diff
     this.commit = null;
     this.hide = localStorage.getItem("hide") === "1";
+    // The base menu: its search, every branch (read when it opens) and the ones matching.
+    this.branches = null;
+    this.matches = [];
+    this.menuList = VirtualListScrollHandle.new();
+    this.search = InputState.new({ placeholder: "Search branches" });
+    this.search.on("change", (_e, cx) => {
+      this.filter();
+      this.menuList.scroll_to_item(0, "top");
+      cx.notify();
+    });
+    this.search.on("submit", (_e, cx) => {
+      if (this.matches[0]) this.pickBase(this.matches[0].name, cx);
+    });
     if (checking()) return;
     this.origin = this.findOrigin();
     this.scope = this.remembered("scope") ?? props()?.scope;
@@ -161,7 +192,7 @@ export default class Review extends View {
     }
     const root = top.stdout.trim();
     const on = origin.on;
-    const git = (args) => exec("git", [...READ, ...args], { cwd: root, on });
+    const git = gitIn(root, on);
     const read = (path) => readTextFile(`${root}/${path}`, { on });
     const pause = () => cx.sleep(0);
     const repo = await info(git, props()?.base, this.base);
@@ -309,9 +340,61 @@ export default class Review extends View {
     this.reset(cx);
   }
 
+  // Opening reads the branches afresh and puts the keyboard in the search; closing clears it.
+  setPicking(open, cx) {
+    this.picking = open;
+    this.search.set_value("");
+    this.filter();
+    if (open) {
+      this.search.focus();
+      this.loadBranches(cx);
+    }
+    cx.notify();
+  }
+
+  loadBranches(cx) {
+    const { root, repo } = this;
+    if (!root || !repo) return;
+    const run = (this.branchRun ?? 0) + 1;
+    this.branchRun = run;
+    cx.spawn(async (cx) => {
+      const list = await branches(gitIn(root, this.origin.on), [repo.fallback, repo.base], repo.branch).catch(() => null);
+      if (run !== this.branchRun) return;
+      this.branches = list ?? [];
+      this.filter();
+      cx.notify();
+    });
+  }
+
+  // Case-insensitive, anywhere in the name; at most LIST_MAX, what a virtual list takes.
+  filter() {
+    const q = this.search.value().trim().toLowerCase();
+    const all = this.branches ?? [];
+    const found = q ? all.filter((b) => b.name.toLowerCase().includes(q)) : all;
+    this.matchCount = found.length;
+    this.matches = found.slice(0, LIST_MAX);
+  }
+
+  // git fetch --prune origin, then the menu's list and the diff again (the base may have moved).
+  fetch(cx) {
+    const root = this.root;
+    if (!root || this.fetching?.state === "running") return;
+    this.fetching = { state: "running" };
+    cx.notify();
+    cx.spawn(async (cx) => {
+      // No terminal to answer a password prompt in: fail with git's message instead of waiting.
+      const r = await exec("env", ["GIT_TERMINAL_PROMPT=0", "git", "fetch", "--prune", "origin"], { cwd: root, on: this.origin.on, timeout: FETCH_TIMEOUT }).catch((e) => ({ code: null, stderr: String(e?.message ?? e) }));
+      const why = (r.stderr || r.stdout || "").trim();
+      this.fetching = r.code === 0 ? { state: "done", at: Date.now() } : { state: "failed", text: why || `git fetch failed (exit ${r.code})` };
+      if (this.picking) this.loadBranches(cx);
+      this.refresh(cx);
+      cx.notify();
+    });
+  }
+
   pickBase(base, cx) {
-    this.picking = false;
-    if (base === this.repo?.base) return cx.notify();
+    this.setPicking(false, cx);
+    if (base === this.repo?.base) return;
     this.base = base;
     this.commit = null;
     this.remember("base", base);
@@ -376,20 +459,85 @@ export default class Review extends View {
     return { A: t.ansi2, D: t.ansi1, R: t.accent }[status] ?? t.working;
   }
 
-  // The base, and a list of the others to compare with.
+  // The base, and a menu of every branch to compare with: a search, the matches, and Fetch.
+  // The list is virtual (a repo can have thousands), so a click comes through on_item_click.
   basePicker(repo, t) {
-    const option = (base) =>
+    const option = (b, i) =>
       h_flex()
-        .id(`base-${base}`)
-        .h(26)
-        .px(8)
+        .h(MENU_ROW)
+        .flex_none()
+        .pl(8)
+        .pr(14) // clear of the scrollbar
+        .gap(8)
         .items_center()
         .rounded(6)
         .cursor_pointer()
-        .when(base === repo.base, (el) => el.bg(t.selected).text_color(t.foreground))
-        .when(base !== repo.base, (el) => el.text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)))
-        .on_click((_e, cx) => this.pickBase(base, cx))
-        .child(div().truncate().child(base));
+        .when(b.name === repo.base, (el) => el.bg(t.selected).text_color(t.foreground))
+        .when(b.name !== repo.base, (el) => el.text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)))
+        .child(div().flex_1().min_w(0).truncate().child(b.name))
+        .when(i === 0 && Boolean(this.search.value().trim()), (el) => el.child(div().flex_none().text_size(TEXT.badge).text_color(t.dim).child("↵")))
+        .when(b.name === repo.fallback, (el) => el.child(div().flex_none().text_size(TEXT.badge).text_color(t.dim).child("default")))
+        .child(div().flex_none().text_size(TEXT.label).text_color(t.dim).child(age(b.at)));
+    const matches = this.matches;
+    const note = (text) => div().px(8).py(6).text_color(t.dim).child(text);
+    const list = !this.branches
+      ? note("Loading branches…")
+      : !matches.length
+        ? note(this.branches.length ? "No branch matches" : "No branches")
+        : div()
+            .flex_none()
+            .h(Math.min(matches.length, MENU_ROWS) * MENU_ROW)
+            .relative()
+            .child(
+              v_virtual_list(
+                "review-bases",
+                matches.length,
+                matches.map(() => MENU_ROW),
+                (i) => `b:${matches[i].name}`,
+                (range) => matches.slice(range.start, range.end).map((b, k) => option(b, range.start + k)),
+              )
+                .track_scroll(this.menuList)
+                .on_item_click((key, cx) => this.pickBase(key.slice(2), cx))
+                .size_full(),
+            )
+            .child(Scrollbar.vertical("review-bases").viewport_from_layout().absolute().inset_0());
+    const f = this.fetching;
+    const fetched = !f ? null : f.state === "running" ? "Fetching origin…" : f.state === "done" ? `Fetched at ${clock(f.at)}` : null;
+    const footer = v_flex()
+      .gap(4)
+      .pt(5)
+      .border_t(1)
+      .border_color(t.border)
+      .child(
+        h_flex()
+          .gap(8)
+          .items_center()
+          .child(
+            div()
+              .id("base-fetch")
+              .flex_none()
+              .h(24)
+              .px(8)
+              .flex()
+              .items_center()
+              .rounded(6)
+              .when(f?.state === "running", (el) => el.text_color(t.dim))
+              .when(f?.state !== "running", (el) => el.cursor_pointer().text_color(t.foreground).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.fetch(cx)))
+              .tooltip("git fetch --prune origin")
+              .child("Fetch"),
+          )
+          .child(div().flex_1().min_w(0).truncate().text_size(TEXT.label).text_color(t.dim).child(fetched ?? (matches.length < this.matchCount ? `First ${matches.length} of ${this.matchCount}` : ""))),
+      )
+      .when(f?.state === "failed", (el) =>
+        el.child(
+          v_flex()
+            .px(8)
+            .pb(3)
+            .text_size(TEXT.label)
+            .text_color(t.ansi1)
+            .children(f.text.split("\n").filter((l) => l.trim()).map((l) => div().child(l))),
+        ),
+      );
     const trigger = h_flex()
       .id("base-trigger")
       .flex_none()
@@ -406,12 +554,22 @@ export default class Review extends View {
       .child(div().text_size(TEXT.badge).text_color(t.dim).child("▾"));
     return Popover.new("review-base")
       .open(Boolean(this.picking))
-      .on_open_change((open, cx) => {
-        this.picking = open;
-        cx.notify();
-      })
+      .on_open_change((open, cx) => this.setPicking(open, cx))
       .trigger(trigger)
-      .content(v_flex().w(220).p(5).gap(1).rounded(7).border_1().border_color(t.border).bg(t.popover).text_size(TEXT.small).children(repo.bases.map(option)));
+      .content(
+        v_flex()
+          .w(340)
+          .p(5)
+          .gap(5)
+          .rounded(7)
+          .border_1()
+          .border_color(t.border)
+          .bg(t.popover)
+          .text_size(TEXT.small)
+          .child(div().h(28).px(8).flex().items_center().rounded(6).border_1().border_color(t.border).bg(t.background).child(Input.new(this.search).h(26).w_full().text_color(t.foreground)))
+          .child(list)
+          .child(footer),
+      );
   }
 
   header(t) {
