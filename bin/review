@@ -1,0 +1,37 @@
+#!/bin/bash
+# review: open a folder's git changes in Herdr's Review mod, as a new tab.
+#   review [folder] [--base <branch>] [--scope uncommitted|branch|commit]
+# folder: default the current one. --base: what Branch compares with (default: origin/HEAD's
+# branch, the local one when it exists). Run in a Herdr terminal, the tab opens in its space.
+# cmd-shift-r opens the same view beside the focused terminal instead.
+set -euo pipefail
+
+die() { echo "review: $*" >&2; exit 1; }
+
+folder="" base="" scope=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --base) base=${2:?--base needs a branch}; shift 2 ;;
+    --scope)
+      scope=${2:?--scope needs uncommitted, branch or commit}; shift 2
+      case "$scope" in uncommitted|branch|commit) ;; *) die "unknown scope '$scope'" ;; esac ;;
+    -h|--help) sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) die "unknown option $1" ;;
+    *) [ -z "$folder" ] || die "one folder at a time"; folder=$1; shift ;;
+  esac
+done
+
+dir=$(cd "${folder:-.}" 2>/dev/null && pwd -P) || die "no folder ${folder}"
+root=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || die "$dir isn't in a git repository"
+[ -z "$base" ] || git -C "$root" rev-parse --verify -q "$base^{commit}" >/dev/null || die "no branch or commit '$base' in $root"
+
+space=""
+if [ -n "${HC_TERMINAL_ID:-}" ]; then
+  space=$(herdr-app ls | jq -r --arg t "$HC_TERMINAL_ID" \
+    '.spaces[] as $s | $s.tabs[] | .terminals[] | select(.terminal == $t) | $s.id' | head -1)
+fi
+
+herdr-app do tab.new "$(jq -nc --arg n "Review · $(basename "$root")" --arg s "$space" --arg f "$root" --arg b "$base" --arg sc "$scope" \
+  '{name: $n, mod: "review", props: ({folder: $f} + (if $b == "" then {} else {base: $b} end) + (if $sc == "" then {} else {scope: $sc} end))}
+   + (if $s == "" then {} else {space: $s} end)')" >/dev/null
+echo "review: opened $(basename "$root")"
