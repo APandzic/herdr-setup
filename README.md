@@ -68,7 +68,7 @@ cockpit-task add --key pr-123 --title "PR #123: Add retry" --url https://… --t
 
 ## Usage in the sidebar
 
-My Usage shows a row per service: its logo (the program's icon from Herdr's program table, as the sidebar's agents have), then the 5-hour and 7-day limits, each with its used % (yellow from 50, red from 80) and the time until it resets. Click a row for every limit as a bar; hover for the plan and how fresh the numbers are. Claude Code hands its limits only to a status line, so they come from `~/.cache/claude-usage/rate-limits.json`, which the status line has to save. Mine (`~/.claude/statusline-command.sh`, not in this repo) does it with:
+My Usage shows a row per service: its logo (the program's icon from Herdr's program table, as the sidebar's agents have), then one line per limit (5-hour above 7-day), each with a bar and its used % (yellow from 50, red from 80) and the time until it resets. Click a row for the plan, the clock time each limit resets and when the numbers were saved; hover for a summary of the row. Claude Code hands its limits only to a status line, so they come from `~/.cache/claude-usage/rate-limits.json`, which the status line has to save. Mine (`~/.claude/statusline-command.sh`, not in this repo) does it with:
 
 ```sh
 limits=$(echo "$input" | jq -c '.rate_limits // empty')
