@@ -21,6 +21,14 @@ herdr-app do tab.rename "$(jq -nc --arg id "<cockpit tab>" --arg n "<cockpit nam
 ~/.claude/skills/cockpit-panel/scripts/cockpit-panel open --project "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" --cockpit "$HC_TERMINAL_ID"
 ```
 
+Then register the rule files you just read (this file, your cockpit's SKILL.md, the panel's SKILL.md), so you hear when they change:
+
+```bash
+cockpit-rules register ~/.claude/skills/_cockpit-engine/ENGINE.md ~/.claude/skills/<this cockpit's skill>/SKILL.md ~/.claude/skills/cockpit-panel/SKILL.md
+```
+
+From then on, when a prompt carries a note that cockpit rule files changed, re-read each named file in full before acting on that prompt, apply it to the current round, and tell the owner in one line what changed.
+
 The panel has two top tabs: **Docs** (filled when workers write docs) and **Inbox** (tasks waiting for the owner's Start or Decline, the workers you're running, and the repo's scripts). If the repo has `.herdr/cockpit.json` (§10), tell the owner in one line which scripts are available and which are running (those marked `autostart` start by themselves).
 
 **The inbox is the queue.** When the owner hasn't named tasks and the cockpit skill knows how to list candidates (e.g. open PRs), put them in the inbox with `cockpit-task add` (`--source cockpit`) instead of listing them in chat, and say how many are waiting. The owner starts them with the panel's Start worker, or by naming them in chat.
