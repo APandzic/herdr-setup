@@ -31,6 +31,8 @@ const expand = (path) => (path?.startsWith("~/") ? `${home()}${path.slice(1)}` :
 const basename = (path) => path.split("/").filter(Boolean).at(-1) ?? path;
 const tilde = (path) => (path.startsWith(`${home()}/`) ? `~${path.slice(home().length)}` : path);
 const markKey = (file) => `${file.path}\n${file.hash}`;
+// New and deleted files: one row in the diff until opened, so hundreds of them don't bury the edits.
+const folded = (file) => file.status === "A" || file.status === "D";
 
 function parseStore(raw) {
   try {
@@ -53,6 +55,7 @@ export default class Review extends View {
     this.commits = [];
     this.viewed = {};
     this.pending = new Map(); // marks not saved yet: key → time, or null to unmark
+    this.open = new Set(); // paths of folded files opened in the diff
     this.commit = null;
     this.hide = localStorage.getItem("hide") === "1";
     if (checking()) return;
@@ -201,24 +204,30 @@ export default class Review extends View {
   }
 
   // The rows the diff list draws and their heights, the tree, and the width the longest line needs.
-  // Past LIST_MAX rows, lines go in chunks of `per`, one list item each.
+  // Past LIST_MAX rows, lines go in chunks of `per`, one list item each; a file's last chunk
+  // may be partial, so the budget leaves one item per file for it besides its header.
   layout() {
     const rows = [];
     const sizes = [];
     let widest = 0;
     this.index = {};
     const shown = this.files.filter((f) => !(this.hide && this.seen(f)));
-    const total = shown.reduce((n, f) => n + (this.seen(f) ? 0 : f.rows.length + (f.note ? 1 : 0) + (f.more ? 1 : 0)), 0);
-    const per = Math.max(1, Math.ceil(total / (LIST_MAX - shown.length)));
-    for (const file of shown) {
-      const seen = this.seen(file);
-      this.index[file.path] = rows.length;
-      rows.push({ key: `f:${file.path}`, file, seen });
-      sizes.push(HEADER);
-      if (seen) continue;
-      const lines = file.rows.map((row, i) => ({ key: `${file.path}:${i}`, ...row }));
+    const bodies = shown.map((file) => {
+      if (folded(file) ? !this.open.has(file.path) : this.seen(file)) return null;
+      // A new or deleted file's hunk header only repeats its line count.
+      const lines = file.rows.map((row, i) => ({ key: `${file.path}:${i}`, ...row, quiet: file.status === "A" })).filter((r) => !(folded(file) && r.kind === "@"));
       if (file.note) lines.push({ key: `${file.path}:note`, kind: "note", text: file.note });
       if (file.more) lines.push({ key: `${file.path}:more`, kind: "note", text: `… ${file.more} more lines not shown` });
+      return lines;
+    });
+    const total = bodies.reduce((n, lines) => n + (lines?.length ?? 0), 0);
+    const per = Math.max(1, Math.ceil(total / (LIST_MAX - 2 * shown.length)));
+    for (const [n, file] of shown.entries()) {
+      this.index[file.path] = rows.length;
+      rows.push({ key: `f:${file.path}`, file, seen: this.seen(file), open: Boolean(bodies[n]) });
+      sizes.push(HEADER);
+      const lines = bodies[n];
+      if (!lines) continue;
       for (let i = 0; i < lines.length; i += per) {
         rows.push(per === 1 ? lines[i] : { key: `${lines[i].key}+`, lines: lines.slice(i, i + per) });
         sizes.push(ROW * Math.min(per, lines.length - i));
@@ -243,6 +252,7 @@ export default class Review extends View {
     const at = on ? new Date().toISOString() : null;
     if (on) this.viewed[key] = at;
     else delete this.viewed[key];
+    if (on) this.open.delete(file.path);
     this.pending.set(key, at);
     this.layout();
     if (jump) {
@@ -343,6 +353,22 @@ export default class Review extends View {
       .text_size(TEXT.label)
       .when(file.add > 0, (el) => el.child(div().text_color(t.ansi2).child(`+${file.add}`)))
       .when(file.del > 0, (el) => el.child(div().text_color(t.ansi1).child(`−${file.del}`)));
+  }
+
+  // In place of a new or deleted file's +/− count: what it is and how long.
+  badge(file, t) {
+    const color = file.status === "A" ? t.ansi2 : t.ansi1;
+    const n = file.status === "A" ? file.add : file.del;
+    const label = file.status === "A" ? "New" : "Deleted";
+    return div()
+      .flex_none()
+      .px(6)
+      .rounded(4)
+      .bg(`${color}20`)
+      .text_size(TEXT.badge)
+      .font_semibold()
+      .text_color(color)
+      .child(file.note ? label : `${label} · ${n} line${n === 1 ? "" : "s"}`);
   }
 
   statusColor(status, t) {
@@ -519,6 +545,10 @@ export default class Review extends View {
         .cursor_pointer()
         .hover((s) => s.bg(t.hover))
         .on_click((_e, cx) => {
+          if (folded(f) && !this.open.has(f.path)) {
+            this.open.add(f.path);
+            this.layout();
+          }
           if (this.index[f.path] !== undefined) this.list.scroll_to_item(this.index[f.path], "top");
           cx.notify();
         })
@@ -623,24 +653,27 @@ export default class Review extends View {
         .border_b(1)
         .border_color(t.border)
         .text_size(TEXT.small)
-        .child(div().flex_none().w(10).text_size(TEXT.badge).text_color(t.dim).child(row.seen ? "▸" : "▾"))
-        .child(this.checkbox(row.seen, t))
+        .child(div().flex_none().w(10).text_size(TEXT.badge).text_color(t.dim).child(row.open ? "▾" : "▸"))
+        .when(!folded(f), (el) => el.child(this.checkbox(row.seen, t)))
         .child(div().flex_none().w(10).text_size(TEXT.label).text_color(this.statusColor(f.status, t)).child(f.status))
         .child(
           h_flex()
             .flex_none()
+            .when(f.status === "D", (el) => el.line_through())
             .child(div().text_color(t.dim).child(parts.length ? `${parts.join("/")}/` : ""))
-            .child(div().font_medium().text_color(row.seen ? t.muted : t.foreground).child(name)),
+            .child(div().font_medium().text_color(row.seen || f.status === "D" ? t.muted : t.foreground).child(name)),
         )
         .when(Boolean(f.from), (el) => el.child(div().flex_none().text_color(t.dim).child(`← ${f.from}`)))
-        .child(this.stat(f, t))
-        .when(row.seen, (el) => el.child(div().flex_none().text_size(TEXT.label).text_color(t.dim).child("Viewed")));
+        .child(folded(f) ? this.badge(f, t) : this.stat(f, t))
+        .when(row.seen, (el) => el.child(div().flex_none().text_size(TEXT.label).text_color(t.dim).child("Viewed")))
+        .when(folded(f), (el) => el.child(div().flex_1()).child(div().flex_none().text_size(TEXT.label).text_color(t.dim).child(row.open ? "Hide" : "Show")));
     }
     if (row.lines) return v_flex().w_full().flex_none().children(row.lines.map((l) => this.diffRow(l, t, mono)));
     const line = h_flex().w_full().h(ROW).flex_none().font_family(mono).text_size(TEXT.small);
     if (row.kind === "@") return line.px(12).bg(t.raised).text_color(t.dim).child(div().truncate().child(row.text));
     if (row.kind === "note" || row.kind === "") return line.px(12).text_color(t.dim).child(row.text);
     const number = (n) => div().w(44).flex_none().pr(8).text_right().text_color(t.dim).child(n === undefined ? "" : String(n));
+    if (row.quiet) return line.child(number(row.new)).child(div().flex_1().min_w(0).truncate().pl(8).child(row.text));
     return line
       .when(row.kind === "+", (el) => el.bg(`${t.ansi2}18`))
       .when(row.kind === "-", (el) => el.bg(`${t.ansi1}18`))
@@ -650,10 +683,15 @@ export default class Review extends View {
       .child(div().flex_1().min_w(0).truncate().child(row.text));
   }
 
+  // A changed or renamed file's header marks it viewed; a new or deleted one's opens or closes it.
   clickRow(key, cx) {
     if (!key.startsWith("f:")) return;
     const file = this.files.find((f) => f.path === key.slice(2));
-    if (file) this.toggle(file, true, cx);
+    if (!file) return;
+    if (!folded(file)) return this.toggle(file, true, cx);
+    if (!this.open.delete(file.path)) this.open.add(file.path);
+    this.layout();
+    cx.notify();
   }
 
   empty(t, title, ...lines) {
