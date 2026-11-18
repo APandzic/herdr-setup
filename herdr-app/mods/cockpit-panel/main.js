@@ -5,7 +5,8 @@
 // then the chosen tab rendered. Rereads when anything under the folder changes. The doc's bar
 // has Remove, which deletes the doc's folder after a second click.
 // Opened for a cockpit (props project and cockpit_terminal too), it has two top tabs:
-// Docs, and Inbox (the project's scripts and the tasks they find, inbox.js).
+// Docs, and Inbox (the project's scripts and the tasks they find, inbox.js). Docs counts the docs
+// that need the owner; merged ones are history, never unseen, in a closed Merged group of the list.
 // A doc with decisions.json (cockpit-panel decision) also gets Open questions, answered here with
 // buttons that tell the cockpit (hc send "DECISION <doc> <id>: <answer>") or hand the question to
 // its chat ("DISCUSS <doc> <id>"), and Decision history.
@@ -112,8 +113,9 @@ export default class CockpitPanel extends View {
       } catch {
         // Mid-write; the next change reloads it.
       }
+      let open = [];
       if (Array.isArray(decisions) && decisions.length) {
-        const open = decisions.filter((x) => !x.answered);
+        open = decisions.filter((x) => !x.answered);
         const done = decisions.filter((x) => x.answered).sort((a, b) => String(b.answered.at).localeCompare(String(a.answered.at)));
         const title = open.length ? `Open questions · ${open.length}` : "Open questions";
         tabs.push({ id: "open-questions", title, path: `${file}#open`, text: open.map((x) => x.id).join(), view: "open", decisions: open });
@@ -127,14 +129,18 @@ export default class CockpitPanel extends View {
         worker: meta.worker ?? "",
         created: meta.created ?? "",
         handled: HANDLED[meta.handled?.state] ? meta.handled : null,
+        merged: meta.handled?.state === "merged",
+        open: open.length,
         review: meta.review?.repo ? meta.review : null,
         folder,
         tabs,
       });
     }
-    docs.sort((a, b) => String(b.created).localeCompare(String(a.created)));
-    // First load: what's there counts as seen, so only later writes get a dot.
+    // Active docs first, then merged ones; newest first in each.
+    docs.sort((a, b) => a.merged - b.merged || String(b.created).localeCompare(String(a.created)));
+    // First load: what's there counts as seen, so only later writes get a dot. A merged doc is always seen.
     if (!this.loaded) for (const d of docs) for (const tab of d.tabs) this.seen[tab.path] ??= tab.text;
+    for (const d of docs) if (d.merged) for (const tab of d.tabs) this.seen[tab.path] = tab.text;
     this.docs = docs;
     this.loaded = true;
   }
@@ -505,6 +511,7 @@ export default class CockpitPanel extends View {
                 .text_color(picked ? t.foreground : t.muted)
                 .child(d.worker || d.id),
             )
+            .when(!d.merged && d.open > 0, (el) => el.child(div().flex_none().text_size(TEXT.badge).font_medium().text_color(t.accent).child(`${d.open} open`)))
             .when(!picked && d.tabs.some(unseen), (el) => el.child(div().flex_none().size(6).rounded(3).bg(t.accent)))
             // Narrow: a dot in the handled tone; wide: the short badge in place of the progress marks.
             .when(Boolean(d.handled) && narrow, (el) =>
@@ -517,6 +524,27 @@ export default class CockpitPanel extends View {
         )
         .when(!narrow, (el) => el.child(div().truncate().text_size(TEXT.label).text_color(t.dim).child(d.title)));
     };
+    // Merged docs under a header that opens and closes them (closed when the panel opens); the doc
+    // shown keeps its row while closed.
+    const merged = this.docs.filter((d) => d.merged);
+    const header = h_flex()
+      .id("doc-merged")
+      .flex_none()
+      .mt(8)
+      .px(8)
+      .py(4)
+      .gap(6)
+      .items_center()
+      .rounded(6)
+      .cursor_pointer()
+      .hover((s) => s.bg(t.hover))
+      .on_click((_e, cx) => {
+        this.showMerged = !this.showMerged;
+        cx.notify();
+      })
+      .child(div().flex_none().w(8).text_size(TEXT.label).text_color(t.dim).child(this.showMerged ? "▾" : "▸"))
+      .child(div().flex_1().min_w(0).truncate().text_size(TEXT.label).font_semibold().text_color(t.muted).child("Merged"))
+      .child(div().flex_none().px(5).rounded(4).border_1().border_color(t.border).text_size(TEXT.badge).text_color(t.muted).child(String(merged.length)));
     return v_flex()
       .id("cockpit-panel-list")
       .flex_none()
@@ -528,7 +556,8 @@ export default class CockpitPanel extends View {
       .border_r(1)
       .border_color(t.border)
       .overflow_y_scrollbar()
-      .children(this.docs.map(row));
+      .children(this.docs.filter((d) => !d.merged).map(row))
+      .when(merged.length > 0, (el) => el.child(header).children(merged.filter((d) => this.showMerged || d === current).map(row)));
   }
 
   renderDocs() {
@@ -603,6 +632,10 @@ export default class CockpitPanel extends View {
     if (!this.inbox) return this.renderDocs();
     const t = theme();
     const fresh = this.inbox.newCount();
+    // Rendered before counting: it marks the tab on screen as seen.
+    const body = this.view === "inbox" ? this.inbox.render() : this.renderDocs();
+    // Docs that need the owner: not merged, with unseen changes or open questions.
+    const waiting = this.docs.filter((d) => !d.merged && (d.open > 0 || d.tabs.some((x) => this.seen[x.path] !== x.text))).length;
     const top = (id, label, count) =>
       this.pill(`view-${id}`, label, this.view === id, false, (cx) => {
         this.view = id;
@@ -626,9 +659,9 @@ export default class CockpitPanel extends View {
           .bg(t.chrome)
           .border_b(1)
           .border_color(t.border)
-          .child(top("docs", "Docs", this.docs.length))
+          .child(top("docs", "Docs", waiting))
           .child(top("inbox", "Inbox", fresh)),
       )
-      .child(div().flex_1().min_h(0).child(this.view === "inbox" ? this.inbox.render() : this.renderDocs()));
+      .child(div().flex_1().min_h(0).child(body));
   }
 }
