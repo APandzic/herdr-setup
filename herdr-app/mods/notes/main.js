@@ -106,6 +106,8 @@ export default class Notes extends View {
     if (!this.loaded) {
       this.saved = disk;
       this.show(disk ?? "");
+      const end = (disk ?? "").length; // ready to add to the end
+      this.text.set_selected_range({ start: end, end });
       this.loaded = true;
       cx.notify();
       return;
