@@ -39,7 +39,8 @@ Create your doc first:
   ~/.claude/skills/cockpit-panel/scripts/cockpit-panel new ticket-plan <name> "<KEY>: <title>" --into <cockpit tab> --worker <name> [--repo <worktree> --base <branch>]
 - Plan tab: fill it from the repo's own planning step before writing code. If the repo's workflow says a plan
   needs approval, stop there with COCKPIT-STATUS: needs-decision and ask for it.
-- Open questions tab: anything that blocks or shapes the work, with your recommendation. Mark answered ones ✅.
+- Notes tab: your own notes, and the questions you settled yourself, marked ✅. Questions only the owner can
+  answer go in your COCKPIT-DECISIONS block instead, so the cockpit can put them in the panel with answer buttons.
 Keep both tabs current as the work moves.
 Read ~/.claude/skills/cockpit-panel/SKILL.md, section "Writing for a cockpit".
 ```
