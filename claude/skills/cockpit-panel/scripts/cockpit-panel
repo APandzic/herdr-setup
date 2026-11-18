@@ -9,7 +9,8 @@
 #   cockpit-panel open [--force] [--project <dir> --cockpit <terminal>]
 #                                                   open this tab's panel (no-op if already open); with
 #                                                   --project it also gets the Inbox tab for that cockpit,
-#                                                   replacing a plain panel that's already open
+#                                                   replacing a plain panel that's already open, and
+#                                                   records the cockpit for cockpit-task to flag new tasks on
 #   cockpit-panel handled <slug> approved|changes-requested|commented|merged|clear [--into <tab-id>]
 #                                                   mark a doc as acted on (the panel shows it in the doc's bar)
 #   cockpit-panel decision add <slug> <question> [--option <label>]... [--rec <n>] [--context <text>] [--into <tab-id>]
@@ -71,6 +72,12 @@ open_panel() {
     '{direction: "right", pane: $p, mod: "cockpit-panel",
       props: ({dir: $d} + (if $proj == "" then {} else {project: $proj, cockpit_terminal: (if $c == "" then null else $c end)} end))}')" \
     | jq -r '.pane // empty' > "$DIR/.panel"
+  # cockpit-task flags this terminal when a task arrives; the panel only runs while its tab is on screen.
+  if [ -n "$project" ] && [ -n "$cockpit" ]; then
+    local helper state
+    helper=$(command -v cockpit-task || echo "$HOME/.local/bin/cockpit-task")
+    state=$(COCKPIT_PROJECT="$project" "$helper" where 2>/dev/null) && printf '%s\n' "$cockpit" > "$state/cockpit" || true
+  fi
   echo "panel: opened${project:+ with inbox}"
 }
 
