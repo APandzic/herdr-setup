@@ -352,14 +352,28 @@ export class Inbox {
       .child(div().text_size(TEXT.badge).text_color(t.dim).child(String(count)));
   }
 
-  // Size badge, lines added and removed, files, and how many reviewers are on it, at the right.
+  // Tag, size badge, lines added and removed, files, and how many reviewers are on it, at the right.
   // Null when the task has none of these.
   stats(item, t) {
     const add = item.additions ?? 0;
     const del = item.deletions ?? 0;
     const sized = item.additions != null || item.deletions != null || item.files != null;
     const reviewers = item.reviewers;
-    if (!sized && reviewers == null) return null;
+    if (!sized && reviewers == null && !item.tag) return null;
+    // A long tag truncates rather than widen the row.
+    const tag = div()
+      .min_w(0)
+      .px(4)
+      .h(15)
+      .flex()
+      .items_center()
+      .rounded(4)
+      .border_1()
+      .border_color(t.border)
+      .text_size(TEXT.badge)
+      .font_semibold()
+      .text_color(t.muted)
+      .child(div().truncate().child(item.tag ?? ""));
     const size = div()
       .flex_none()
       .px(4)
@@ -384,6 +398,7 @@ export class Inbox {
     return h_flex()
       .gap(6)
       .items_center()
+      .when(Boolean(item.tag), (el) => el.child(tag))
       .when(sized, (el) => el.child(size).child(counts))
       .when(reviewers != null, (el) =>
         el.child(div().flex_1()).child(div().flex_none().text_size(TEXT.label).text_color(t.dim).child(label)),
