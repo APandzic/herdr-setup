@@ -6,7 +6,9 @@
 #                                       prints added | exists | declined (declined less than decline_for ago)
 #                                       | started (a worker had it; it never comes back)
 #                                       the optional fields are refreshed on a task that already exists; --tag "" removes the tag
+#                                       added flags the cockpit's tab in the sidebar (the terminal in <state>/cockpit)
 #   cockpit-task update --key <key> [--state new|starting|running|done|declined] [--worker <t>]
+#                                       --state new flags the cockpit like add
 #   cockpit-task decline --key <key>    hide it; it can come back after decline_for
 #   cockpit-task close --key <key>      finished with (approved, cleared): hidden and never offered again
 #   cockpit-task undo --key <key>       back to new
@@ -52,6 +54,22 @@ write() {
   jq "$@" "$filter" "$INBOX" > "$INBOX.tmp" && mv "$INBOX.tmp" "$INBOX"
 }
 
+# A task arrived: flag the cockpit's tab in the sidebar ("Needs your attention"), whatever tab is on
+# screen. cockpit-panel open records the cockpit's terminal in $STATE/cockpit. A second arrival before
+# the owner looks counts up; a label someone else set stays. Anything missing or failing is skipped.
+flag() {
+  local t old n why
+  t=$(cat "$STATE/cockpit" 2>/dev/null) && [ -n "$t" ] || return 0
+  old=$(hc get "$t" --json 2>/dev/null | jq -r 'select(.state == "live") | "live:" + (.labels.attention // "")' 2>/dev/null) || return 0
+  case "$old" in
+    live:) why="New in the inbox: $1" ;;
+    "live:New in the inbox: "*) why="2 new in the inbox" ;;
+    live:*" new in the inbox") n=${old#live:}; n=${n%% *}; [[ "$n" =~ ^[0-9]+$ ]] || return 0; why="$((n + 1)) new in the inbox" ;;
+    *) return 0 ;;
+  esac
+  hc label "$t" "attention=$why" >/dev/null 2>&1 || true
+}
+
 cmd=${1:-}; [ $# -gt 0 ] && shift
 key="" title="" url="" task="" source=${COCKPIT_SCRIPT:-manual} state="" worker=""
 author="" opened="" branch="" additions="" deletions="" files="" reviewers="" tag="" tagged=""
@@ -95,7 +113,7 @@ case "$cmd" in
         if [ $(( now - at )) -lt "$(decline_for)" ]; then echo declined; exit 0; fi
         write '.tasks |= map(if .key == $k then . + $m | del(.tag | select(. == "")) | .state = "new" | .added = $now | del(.declined_at) else . end)' \
           --arg k "$key" --argjson now "$now" --argjson m "$meta"
-        echo added; exit 0
+        echo added; flag "$title"; exit 0
       fi
       [ "$meta" = "{}" ] || write '.tasks |= map(if .key == $k then . + $m | del(.tag | select(. == "")) else . end)' --arg k "$key" --argjson m "$meta"
       echo exists; exit 0
@@ -103,14 +121,15 @@ case "$cmd" in
     write '.tasks += [{key: $k, title: $t, url: (if $u == "" then null else $u end), task: (if $x == "" then $t else $x end),
                       source: $s, added: $now, state: "new"} + $m | del(.tag | select(. == ""))]' \
       --arg k "$key" --arg t "$title" --arg u "$url" --arg x "$task" --arg s "$source" --argjson now "$now" --argjson m "$meta"
-    echo added ;;
+    echo added; flag "$title" ;;
   update)
     need_key; lock; has_key || die "no task $key"
     write '.tasks |= map(if .key == $k then (if $st == "" then . else .state = $st end)
                          | (if $w == "" then . else .worker = $w end)
                          | (if $st == "declined" then .declined_at = $now else . end)
                          | (if $st == "starting" or $st == "running" or $st == "done" then .started_at //= $now else . end) else . end)' \
-      --arg k "$key" --arg st "$state" --arg w "$worker" --argjson now "$now" ;;
+      --arg k "$key" --arg st "$state" --arg w "$worker" --argjson now "$now"
+    if [ "$state" = new ]; then flag "$(jq -r --arg k "$key" '.tasks[] | select(.key == $k) | .title' "$INBOX")"; fi ;;
   decline)
     need_key; lock; has_key || die "no task $key"
     write '.tasks |= map(if .key == $k then .state = "declined" | .declined_at = $now else . end)' --arg k "$key" --argjson now "$now" ;;
@@ -123,5 +142,5 @@ case "$cmd" in
   list)
     jq --arg k "$key" --arg st "$state" '[.tasks[] | select(($k == "" or .key == $k) and ($st == "" or .state == $st))]' "$INBOX" ;;
   where) echo "$STATE" ;;
-  *) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
