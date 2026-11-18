@@ -1,8 +1,9 @@
 // Review: a read-only look through a repo's git changes, as a tab, beside a terminal or as a dialog.
 // props: {folder?, base?, scope?, overlay?}. Without a folder (the cmd-shift-r split, or the cmd-r
 // dialog, mod.open with mod.json's overlay, which leaves focus on the terminal) it takes the focused
-// terminal's when it starts, and keeps it; the scope and base picked are kept per folder, the
-// branch picked only while it's open, so it opens on the checkout.
+// terminal's when it starts, and keeps it. Each folder's last review (scope, branch, base, commit,
+// the new and deleted files opened, the place in the diff) is kept and picked up where it was left;
+// the first in a folder opens on the checkout.
 // Scopes: Uncommitted, Branch (a branch against its base; the header picks both, the checkout by
 // default; a branch, origin's or local, or a worktree, whose uncommitted edits are included like the
 // checkout's) and Commit (a branch's commits). Left: progress, the
@@ -99,12 +100,18 @@ export default class Review extends View {
     this.origin = this.findOrigin();
     this.scope = this.remembered("scope") ?? props()?.scope;
     this.base = this.remembered("base"); // picked in the header; else props.base or the default
-    this.target = null; // picked in the header (a ref or WORKTREE + folder); else the checkout
+    this.target = this.remembered("target") || null; // picked in the header (a ref or WORKTREE + folder); else the checkout
+    this.commit = this.remembered("commit") || null;
+    const open = this.stored("open");
+    this.open = new Set(Array.isArray(open) ? open : []);
+    this.restore = this.stored("place"); // the place to scroll to once the first load is in
     this.refresh(cx);
     cx.timer.every(10000, (cx) => this.refresh(cx));
+    cx.timer.every(400, () => this.savePlace());
   }
 
   async close() {
+    this.savePlace();
     this.watched = null;
     this.watch?.cancel();
   }
@@ -116,6 +123,18 @@ export default class Review extends View {
 
   remember(name, value) {
     if (this.origin) localStorage.setItem(`${name}:${this.origin.on ?? ""}:${this.origin.folder}`, value);
+  }
+
+  stored(name) {
+    try {
+      return JSON.parse(this.remembered(name) || "null");
+    } catch {
+      return null;
+    }
+  }
+
+  rememberOpen() {
+    this.remember("open", JSON.stringify([...this.open]));
   }
 
   // props.folder, else the focused terminal's folder when this copy starts, or the tab's
@@ -169,7 +188,13 @@ export default class Review extends View {
       } finally {
         if (run !== this.run) return;
         this.loading = false;
+        const place = this.restore ?? this.place();
         this.layout();
+        if (this.shown === this.view() && !this.error) {
+          this.keep(place);
+          this.restore = null;
+          this.prune();
+        }
         cx.notify();
         if (this.again) this.refresh(cx);
       }
@@ -252,11 +277,14 @@ export default class Review extends View {
   // The rows the diff list draws and their heights, the tree, and the width the longest line needs.
   // Past LIST_MAX rows, lines go in chunks of `per`, one list item each; a file's last chunk
   // may be partial, so the budget leaves one item per file for it besides its header.
+  // spots: each row's file and first line (-1 for its header), for place().
   layout() {
     const rows = [];
     const sizes = [];
+    const spots = [];
     let widest = 0;
     this.index = {};
+    this.lines = {};
     const shown = this.files.filter((f) => !(this.hide && this.seen(f)));
     const bodies = shown.map((file) => {
       if (folded(file) ? !this.open.has(file.path) : this.seen(file)) return null;
@@ -272,16 +300,18 @@ export default class Review extends View {
       this.index[file.path] = rows.length;
       rows.push({ key: `f:${file.path}`, file, seen: this.seen(file), open: Boolean(bodies[n]) });
       sizes.push(HEADER);
+      spots.push([file.path, -1]);
       const lines = bodies[n];
       if (!lines) continue;
+      this.lines[file.path] = lines;
       for (let i = 0; i < lines.length; i += per) {
         rows.push(per === 1 ? lines[i] : { key: `${lines[i].key}+`, lines: lines.slice(i, i + per) });
         sizes.push(ROW * Math.min(per, lines.length - i));
+        spots.push([file.path, i]);
       }
       widest = Math.max(widest, file.width);
     }
-    this.rows = rows;
-    this.sizes = sizes;
+    Object.assign(this, { rows, sizes, spots, per });
     this.diffWidth = Math.max(300, Math.ceil((widest + 1) * 7.3) + 110);
     const listed = this.hide ? this.files.filter((f) => !this.seen(f)) : this.files;
     this.treeRows = GROUPS.flatMap((g) => {
@@ -291,6 +321,56 @@ export default class Review extends View {
     }).map((r, i) => ({ ...r, key: r.kind === "file" ? `f:${r.file.path}` : `${r.kind}:${i}` }));
   }
 
+  // Where the diff is scrolled to: the first row on screen (this.top, from the list's renderer) as
+  // its file and line, with the line's numbers and text, so it's found again in rows laid out anew: chunked
+  // differently, or after the diff changed. Null while loading or with nothing listed.
+  place() {
+    const spot = this.shown === this.view() ? this.spots?.[this.top ?? 0] : null;
+    if (!spot) return null;
+    const [path, i] = spot;
+    const line = this.lines[path]?.[i];
+    return { path, i, old: line?.old, new: line?.new, text: line?.text };
+  }
+
+  // Scrolls to a place in the rows just laid out, unless it's still on the row it was: the line
+  // with its text nearest where it was, else the first at or past its line number, else its
+  // file's header; the top once the file's gone.
+  keep(place) {
+    if (!place) return;
+    const head = this.index[place.path];
+    const lines = this.lines[place.path];
+    let row = head ?? 0;
+    if (lines && place.i >= 0) {
+      const by = place.new !== undefined ? "new" : place.old !== undefined ? "old" : null;
+      let found = -1;
+      for (const [j, l] of lines.entries()) if (l.text === place.text && (found < 0 || Math.abs(j - place.i) < Math.abs(found - place.i))) found = j;
+      if (found < 0) found = by ? lines.findIndex((l) => l[by] >= place[by]) : place.i;
+      const i = Math.min(found < 0 ? lines.length - 1 : found, lines.length - 1);
+      row = head + 1 + Math.floor(i / this.per);
+    }
+    if (row === this.top) return;
+    this.list.scroll_to_item(row, "top");
+    this.top = row;
+  }
+
+  // Saved as it changes, every 400 ms and on close; not before a saved place is restored.
+  savePlace() {
+    const place = this.restore ? null : this.place();
+    const text = place && JSON.stringify(place);
+    if (!text || text === this.savedPlace) return;
+    this.savedPlace = text;
+    this.remember("place", text);
+  }
+
+  // Opened files no longer in the view are forgotten.
+  prune() {
+    if (this.big) return;
+    const paths = new Set(this.files.filter(folded).map((f) => f.path));
+    const before = this.open.size;
+    for (const path of this.open) if (!paths.has(path)) this.open.delete(path);
+    if (this.open.size !== before) this.rememberOpen();
+  }
+
   // From a file's header (jump: on to the next unviewed file) or from its check in the tree.
   toggle(file, jump, cx) {
     const key = markKey(file);
@@ -298,7 +378,7 @@ export default class Review extends View {
     const at = on ? new Date().toISOString() : null;
     if (on) this.viewed[key] = at;
     else delete this.viewed[key];
-    if (on) this.open.delete(file.path);
+    if (on && this.open.delete(file.path)) this.rememberOpen();
     this.pending.set(key, at);
     this.layout();
     if (jump) {
@@ -441,6 +521,7 @@ export default class Review extends View {
     if (target === this.target) return;
     this.target = target;
     this.commit = null;
+    this.remember("target", target ?? "");
     this.reset(cx);
   }
 
@@ -450,7 +531,11 @@ export default class Review extends View {
     this.reset(cx);
   }
 
+  // A new view starts at the top; the commit and the (cleared) place are kept for it.
   reset(cx) {
+    this.remember("commit", this.commit ?? "");
+    this.remember("place", "");
+    Object.assign(this, { restore: null, savedPlace: "", top: 0 });
     this.files = [];
     this.big = null;
     this.commits = this.scope === "uncommitted" ? [] : this.commits;
@@ -617,6 +702,23 @@ export default class Review extends View {
           .border_color(t.border)
           .bg(t.popover)
           .text_size(TEXT.small)
+          .when(kind === "branch" && Boolean(repo.target.key), (el) =>
+            el.child(
+              h_flex()
+                .id("branch-back")
+                .h(MENU_ROW)
+                .px(8)
+                .gap(8)
+                .items_center()
+                .rounded(6)
+                .cursor_pointer()
+                .text_color(t.foreground)
+                .hover((s) => s.bg(t.hover))
+                .on_click((_e, cx) => this.pickBranch(`${WORKTREE}${this.root}`, cx))
+                .child(div().flex_none().child("Back to my checkout"))
+                .child(div().flex_1().min_w(0).truncate().text_right().text_size(TEXT.label).text_color(t.dim).child(repo.branch ?? repo.head?.slice(0, 7) ?? "")),
+            ),
+          )
           .child(div().h(28).px(8).flex().items_center().rounded(6).border_1().border_color(t.border).bg(t.background).child(Input.new(this.search).h(26).w_full().text_color(t.foreground)))
           .child(list)
           .child(footer),
@@ -872,6 +974,7 @@ export default class Review extends View {
     if (x >= -4 && x <= 18) return this.toggle(f, false, cx);
     if (folded(f) && !this.open.has(f.path)) {
       this.open.add(f.path);
+      this.rememberOpen();
       this.layout();
     }
     if (this.index[f.path] !== undefined) this.list.scroll_to_item(this.index[f.path], "top");
@@ -1007,6 +1110,7 @@ export default class Review extends View {
     if (!file) return;
     if (!folded(file)) return this.toggle(file, true, cx);
     if (!this.open.delete(file.path)) this.open.add(file.path);
+    this.rememberOpen();
     this.layout();
     cx.notify();
   }
@@ -1069,7 +1173,10 @@ export default class Review extends View {
                   this.rows.length,
                   this.sizes,
                   (i) => this.rows[i].key,
-                  (range) => this.rows.slice(range.start, range.end).map((row) => this.diffRow(row, t, mono)),
+                  (range) => {
+                    this.top = range.start;
+                    return this.rows.slice(range.start, range.end).map((row) => this.diffRow(row, t, mono));
+                  },
                 )
                   .track_scroll(this.list)
                   .on_item_click((key, cx) => this.clickRow(key, cx))
