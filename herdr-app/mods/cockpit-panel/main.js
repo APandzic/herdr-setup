@@ -103,7 +103,9 @@ export default class CockpitPanel extends View {
       for (const tab of meta.tabs) {
         const path = `${folder}/${tab.file ?? `${tab.id}.md`}`;
         const text = (await readTextFile(path).catch(() => null)) ?? "";
-        tabs.push({ id: tab.id, title: tab.title ?? tab.id, path, text });
+        // Ticket plans made before the tab was renamed still call it Open questions, the name of the decisions tab.
+        const title = meta.kind === "ticket-plan" && tab.id === "questions" ? "Notes" : (tab.title ?? tab.id);
+        tabs.push({ id: tab.id, title, path, text });
       }
       // Decisions: open ones and the history, as two tabs after the doc's own.
       const file = `${folder}/decisions.json`;

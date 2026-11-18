@@ -1,8 +1,8 @@
 {
   "title": "Ticket plan",
-  "description": "Plan how to implement a ticket, and the questions to settle first.",
+  "description": "Plan how to implement a ticket, with notes on what you settled along the way.",
   "tabs": [
     { "id": "plan", "title": "Plan" },
-    { "id": "questions", "title": "Open questions" }
+    { "id": "notes", "title": "Notes" }
   ]
 }
