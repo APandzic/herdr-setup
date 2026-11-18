@@ -8,12 +8,12 @@ My [Herdr app](https://herdr.dev/) setup and the Claude Code skills that go with
 |---|---|
 | `herdr-app/layouts/my-main.json` | My window layout: sidebar with Spaces / Agents tabs, tabs bar, Files and Changes panel. |
 | `herdr-app/settings.json` | App settings (zoom, sounds, fonts). |
-| `herdr-app/keys.add.json` | The keys this setup adds to Herdr's (`cmd-shift-r` for Review); merged into your keys.json, the rest of which stays yours. |
+| `herdr-app/keys.add.json` | The keys this setup adds to Herdr's (`cmd-r` and `cmd-shift-r` for Review); merged into your keys.json, the rest of which stays yours. |
 | `herdr-app/mods/my-sidebar` | The sidebar: spaces with their tabs and agents, an Agents list, footer, panel toggle. Forked from Better Sidebar. |
 | `herdr-app/mods/my-config` | A settings dialog for every mod that has settings. Forked from Better Config. |
 | `herdr-app/mods/my-usage` | Claude's plan limits (5-hour, weekly) above the sidebar's footer, Codex's too when you've used it. Modeled on Over9k Usage. |
 | `herdr-app/mods/cockpit-panel` | Cockpit Panel: a read-only markdown panel per Herdr tab, filled by agents from templates. A doc's bar shows what the cockpit did with it (Approved, Merged, …), has Review diff on a worker's doc until it's merged, and Remove (click twice) to delete it. In a cockpit it also has an Inbox tab: the project's scripts (start, stop, run) and the tasks they find. |
-| `herdr-app/mods/review` | Review: a read-only look through a repo's changes (uncommitted, a branch, one commit), as a tab or beside a terminal, with a Viewed check per file. See below. |
+| `herdr-app/mods/review` | Review: a read-only look through a repo's changes (uncommitted, a branch, one commit), as a tab, beside a terminal or over the whole window, with a Viewed check per file. See below. |
 | `herdr-mods/cockpit-panel/templates/` | The Cockpit Panel kinds: PR review, PR summary, task ticket, ticket plan. |
 | `claude/skills/cockpit-panel` | Skill + helper script for agents to create and fill Cockpit Panel. |
 | `claude/skills/herdr-review-cockpit` | Review many PRs in parallel, each worker using the repo's own review method, results in the cockpit's panel. |
@@ -75,6 +75,7 @@ Review shows a repo's changes, read-only: pick **Uncommitted**, **Branch** (a br
 
 Open it:
 
+- `cmd-r` in a terminal: over the whole window, for that terminal's folder. Esc, the **✕** at the header's right or `cmd-r` again closes it.
 - `cmd-shift-r` in a terminal: beside it, for that terminal's folder.
 - `review [folder] [--base <branch>] [--scope uncommitted|branch|commit]`: as a new tab (default: the current folder).
 - **Review diff** in a worker's doc in the Cockpit Panel: that worker's worktree and branch, as a tab. The code cockpit points you to it before it asks whether to merge.
@@ -85,7 +86,7 @@ Branch compares with `--base`, else origin's default branch, else `main` or `mas
 
 Review never sits on *Loading*: it says when there's nothing to show (*No uncommitted changes*), when the folder isn't a git repository, and what git said when it fails. A view over 100,000 changed lines shows only its counts; Branch lists its latest 200 commits. Feedback, approving and merging go through the cockpit's chat; Review never changes your work (Fetch only updates origin's branches, and only when you click it).
 
-The key lives in `herdr-app/keys.add.json`. `install.sh` merges it into `~/.config/herdr-app/keys.json` (backed up first): its keys replace those same keys, everything else in the file stays as it is, and a run that has nothing to add leaves the file alone. `capture.sh` brings back only those keys' bindings, and `update.sh` stops only if you've bound one of them to something else in the app. One catch: Herdr gives a keys file its new default keys on upgrade only while nobody has edited it, and the merge is an edit, so after the first install, new default keys from a Herdr update have to be added by hand.
+The keys live in `herdr-app/keys.add.json` (`cmd-r` is Herdr's `mod.open:review`, which opens Review as the dialog its `mod.json` describes). `install.sh` merges it into `~/.config/herdr-app/keys.json` (backed up first): its keys replace those same keys, everything else in the file stays as it is, and a run that has nothing to add leaves the file alone. `capture.sh` brings back only those keys' bindings, and `update.sh` stops only if you've bound one of them to something else in the app. One catch: Herdr gives a keys file its new default keys on upgrade only while nobody has edited it, and the merge is an edit, so after the first install, new default keys from a Herdr update have to be added by hand.
 
 ## Usage in the sidebar
 
