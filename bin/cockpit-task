@@ -2,10 +2,10 @@
 # cockpit-task: the inbox a project's cockpit scripts put tasks into.
 #   cockpit-task add --key <key> --title <title> [--url <url>] [--task <text>] [--source <script-id>]
 #                    [--author <name>] [--opened <unix seconds|ISO 8601>] [--branch <name>]
-#                    [--additions <n>] [--deletions <n>] [--files <n>] [--reviewers <n>]
+#                    [--additions <n>] [--deletions <n>] [--files <n>] [--reviewers <n>] [--tag <text>]
 #                                       prints added | exists | declined (declined less than decline_for ago)
 #                                       | started (a worker had it; it never comes back)
-#                                       the optional fields are refreshed on a task that already exists
+#                                       the optional fields are refreshed on a task that already exists; --tag "" removes the tag
 #   cockpit-task update --key <key> [--state new|starting|running|done|declined] [--worker <t>]
 #   cockpit-task decline --key <key>    hide it; it can come back after decline_for
 #   cockpit-task close --key <key>      finished with (approved, cleared): hidden and never offered again
@@ -54,13 +54,14 @@ write() {
 
 cmd=${1:-}; [ $# -gt 0 ] && shift
 key="" title="" url="" task="" source=${COCKPIT_SCRIPT:-manual} state="" worker=""
-author="" opened="" branch="" additions="" deletions="" files="" reviewers=""
+author="" opened="" branch="" additions="" deletions="" files="" reviewers="" tag="" tagged=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --key) key=$2 ;; --title) title=$2 ;; --url) url=$2 ;; --task) task=$2 ;;
     --source) source=$2 ;; --state) state=$2 ;; --worker) worker=$2 ;;
     --author) author=$2 ;; --opened) opened=$2 ;; --branch) branch=$2 ;;
     --additions) additions=$2 ;; --deletions) deletions=$2 ;; --files) files=$2 ;; --reviewers) reviewers=$2 ;;
+    --tag) tag=$2 tagged=1 ;;
     *) die "unknown option $1" ;;
   esac
   shift 2
@@ -81,6 +82,8 @@ case "$cmd" in
             .value |= (try (sub("\\.[0-9]+"; "") | sub("\\+00:?00$"; "Z") | fromdateiso8601) catch null)
           else .value |= (try tonumber catch null) end)
       | with_entries(select(.value != null))')
+    # The tag is kept as given, even empty: "" removes it.
+    [ -z "$tagged" ] || meta=$(jq -c --arg tag "$tag" '. + {$tag}' <<<"$meta")
     lock
     row=$(jq -c --arg k "$key" '.tasks[] | select(.key == $k)' "$INBOX")
     if [ -n "$row" ]; then
@@ -90,15 +93,15 @@ case "$cmd" in
         if jq -e '.closed_at or .started_at or .worker' <<<"$row" >/dev/null; then echo started; exit 0; fi
         at=$(jq -r '.declined_at // 0' <<<"$row")
         if [ $(( now - at )) -lt "$(decline_for)" ]; then echo declined; exit 0; fi
-        write '.tasks |= map(if .key == $k then . + $m | .state = "new" | .added = $now | del(.declined_at) else . end)' \
+        write '.tasks |= map(if .key == $k then . + $m | del(.tag | select(. == "")) | .state = "new" | .added = $now | del(.declined_at) else . end)' \
           --arg k "$key" --argjson now "$now" --argjson m "$meta"
         echo added; exit 0
       fi
-      [ "$meta" = "{}" ] || write '.tasks |= map(if .key == $k then . + $m else . end)' --arg k "$key" --argjson m "$meta"
+      [ "$meta" = "{}" ] || write '.tasks |= map(if .key == $k then . + $m | del(.tag | select(. == "")) else . end)' --arg k "$key" --argjson m "$meta"
       echo exists; exit 0
     fi
     write '.tasks += [{key: $k, title: $t, url: (if $u == "" then null else $u end), task: (if $x == "" then $t else $x end),
-                      source: $s, added: $now, state: "new"} + $m]' \
+                      source: $s, added: $now, state: "new"} + $m | del(.tag | select(. == ""))]' \
       --arg k "$key" --arg t "$title" --arg u "$url" --arg x "$task" --arg s "$source" --argjson now "$now" --argjson m "$meta"
     echo added ;;
   update)
