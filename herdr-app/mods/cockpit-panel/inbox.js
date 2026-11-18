@@ -120,7 +120,6 @@ export class Inbox {
     if (this.state) {
       try {
         this.tasks = JSON.parse((await readTextFile(`${this.state}/inbox.json`)) ?? '{"tasks":[]}').tasks ?? [];
-        this.flagArrivals();
       } catch {
         // Mid-write; the next change reloads it.
       }
@@ -135,20 +134,6 @@ export class Inbox {
       this.watchers = watchers;
     }
     this.loaded = true;
-  }
-
-  // Tasks added since the last look flag the cockpit's tab in the sidebar: "Needs your attention".
-  // The time of that look is kept per project, so what came in while Herdr was closed counts too.
-  flagArrivals() {
-    const key = `arrivals-since:${this.project}`;
-    const since = Number(localStorage.getItem(key)) || null;
-    // cockpit-task's times are whole seconds; one added in the same second as the last look counts again.
-    localStorage.setItem(key, String(Math.floor(Date.now() / 1000)));
-    if (since === null || !this.cockpit) return;
-    const arrived = this.tasks.filter((x) => x.state === "new" && x.added >= since);
-    if (!arrived.length) return;
-    const why = arrived.length === 1 ? `New in the inbox: ${arrived[0].title}` : `${arrived.length} new in the inbox`;
-    exec("hc", ["label", this.cockpit, `attention=${why}`]).catch(() => null);
   }
 
   newCount() {

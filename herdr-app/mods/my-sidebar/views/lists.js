@@ -2,8 +2,8 @@
 // each space's tabs and agents under it, and Agents. With `combined: false` in the settings: the
 // two lists one above the other, as two blocks of this mod would draw them.
 // A tab whose terminals carry an `attention` label (hc label <terminal> attention="<why>", set by
-// a script, the Cockpit Panel or an agent) shows "Needs your attention" under its row until
-// the person has looked at it.
+// a script, cockpit-task for a new inbox task, or an agent) shows "Needs your attention" under its
+// row until the person has looked at it.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, focused, theme, setAgentOrder, terminals, panes, exec, run } from "herdr";
