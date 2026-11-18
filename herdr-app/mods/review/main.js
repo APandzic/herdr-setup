@@ -107,7 +107,10 @@ export default class Review extends View {
     this.restore = this.stored("place"); // the place to scroll to once the first load is in
     this.refresh(cx);
     cx.timer.every(10000, (cx) => this.refresh(cx));
-    cx.timer.every(400, () => this.savePlace());
+    cx.timer.every(400, (cx) => {
+      this.chase(cx);
+      this.savePlace();
+    });
   }
 
   async close() {
@@ -191,7 +194,7 @@ export default class Review extends View {
         const place = this.restore ?? this.place();
         this.layout();
         if (this.shown === this.view() && !this.error) {
-          this.keep(place);
+          this.keep(place, cx);
           this.restore = null;
           this.prune();
         }
@@ -335,7 +338,7 @@ export default class Review extends View {
   // Scrolls to a place in the rows just laid out, unless it's still on the row it was: the line
   // with its text nearest where it was, else the first at or past its line number, else its
   // file's header; the top once the file's gone.
-  keep(place) {
+  keep(place, cx) {
     if (!place) return;
     const head = this.index[place.path];
     const lines = this.lines[place.path];
@@ -349,13 +352,40 @@ export default class Review extends View {
       row = head + 1 + Math.floor(i / this.per);
     }
     if (row === this.top) return;
-    this.list.scroll_to_item(row, "top");
-    this.top = row;
+    Object.assign(this, { top: row, goto: { row, tries: 0 }, drawn: null });
+    this.jump(row, cx);
+  }
+
+  // scroll_to_item only scrolls as far as it must: a row below the screen ends up at its foot, and
+  // one on it stays put. So first past it, by more than a screen, then back up to it, which puts it on top.
+  jump(row, cx) {
+    let far = row;
+    for (let px = 0; far < this.rows.length - 1 && px < 4000; far++) px += this.sizes[far];
+    this.list.scroll_to_item(far, "top");
+    cx.notify();
+    cx.timer.after(50, (cx) => {
+      if (this.goto?.row !== row) return;
+      this.list.scroll_to_item(row, "top");
+      cx.notify();
+    });
+  }
+
+  // Asked again until a frame draws the row on top (or the list's end), for two seconds at most.
+  chase(cx) {
+    const goto = this.goto;
+    if (!goto) return;
+    const { drawn } = this;
+    const there = drawn && (drawn.start === goto.row || (drawn.start < goto.row && drawn.end >= this.rows.length));
+    if (this.shown !== this.view() || there || ++goto.tries > 5) {
+      this.goto = null;
+      return;
+    }
+    this.jump(goto.row, cx);
   }
 
   // Saved as it changes, every 400 ms and on close; not before a saved place is restored.
   savePlace() {
-    const place = this.restore ? null : this.place();
+    const place = this.restore || this.goto ? null : this.place();
     const text = place && JSON.stringify(place);
     if (!text || text === this.savedPlace) return;
     this.savedPlace = text;
@@ -535,7 +565,7 @@ export default class Review extends View {
   reset(cx) {
     this.remember("commit", this.commit ?? "");
     this.remember("place", "");
-    Object.assign(this, { restore: null, savedPlace: "", top: 0 });
+    Object.assign(this, { restore: null, goto: null, savedPlace: "", top: 0 });
     this.files = [];
     this.big = null;
     this.commits = this.scope === "uncommitted" ? [] : this.commits;
@@ -1175,6 +1205,7 @@ export default class Review extends View {
                   (i) => this.rows[i].key,
                   (range) => {
                     this.top = range.start;
+                    this.drawn = { start: range.start, end: range.end };
                     return this.rows.slice(range.start, range.end).map((row) => this.diffRow(row, t, mono));
                   },
                 )
