@@ -7,6 +7,7 @@
         "mod": "review"
       }
     },
-    "cmd-r": "mod.open:review"
+    "cmd-r": "mod.open:review",
+    "cmd-j": "mod.open:notes"
   }
 }
