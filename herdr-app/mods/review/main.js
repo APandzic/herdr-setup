@@ -1,5 +1,6 @@
-// Review: a read-only look through a repo's git changes, as a tab or beside a terminal.
-// props: {folder?, base?, scope?}. Without a folder (the cmd-shift-r split) it takes the focused
+// Review: a read-only look through a repo's git changes, as a tab, beside a terminal or as a dialog.
+// props: {folder?, base?, scope?, overlay?}. Without a folder (the cmd-shift-r split, or the cmd-r
+// dialog, mod.open with mod.json's overlay, which leaves focus on the terminal) it takes the focused
 // terminal's when it starts, and keeps it; the scope and base picked are kept per folder, the
 // branch picked only while it's open, so it opens on the checkout.
 // Scopes: Uncommitted, Branch (a branch against its base; the header picks both, the checkout by
@@ -11,7 +12,7 @@
 // comes back unviewed.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list, VirtualListScrollHandle, Popover, InputState, Input } from "gpui-base";
-import { spaces, panes, focused, props, exec, readTextFile, writeTextFile, watchFolder, theme, settings, home, checking } from "herdr";
+import { spaces, panes, focused, props, exec, readTextFile, writeTextFile, watchFolder, theme, settings, home, checking, closeOverlay } from "herdr";
 import { READ, CAP, WORKTREE, info, branches, worktrees, menuList, commits, changes, tree, hash, rows as fileRows } from "./git.js";
 
 const TEXT = { badge: 10, label: 11.5, small: 12, body: 13 };
@@ -681,6 +682,24 @@ export default class Review extends View {
           .child(div().text_color(t.ansi2).child(`+${add}`))
           .child(div().text_color(t.ansi1).child(`−${del}`))
           .child(div().text_color(t.dim).child(`· ${count} file${count === 1 ? "" : "s"}`)),
+      )
+      .when(Boolean(props()?.overlay), (el) =>
+        el.child(
+          div()
+            .id("review-close")
+            .flex_none()
+            .size(24)
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(6)
+            .cursor_pointer()
+            .text_color(t.muted)
+            .hover((s) => s.bg(t.hover).text_color(t.foreground))
+            .tooltip("Close (Esc)")
+            .on_click(() => closeOverlay(props().overlay))
+            .child("✕"),
+        ),
       );
   }
 

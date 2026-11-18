@@ -6,6 +6,7 @@
         "direction": "right",
         "mod": "review"
       }
-    }
+    },
+    "cmd-r": "mod.open:review"
   }
 }
