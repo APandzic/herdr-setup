@@ -1,0 +1,20 @@
+#!/bin/bash
+# note: add a line to the notes Herdr's Notes window shows (cmd-j), ~/.herdr/notes.md.
+#   note "text"   appends text as one line (words are joined with spaces)
+#   note          prints the notes file's path
+# An open Notes window picks the line up within a second.
+set -euo pipefail
+
+file="$HOME/.herdr/notes.md"
+case "${1:-}" in
+  -h|--help) sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
+if [ $# -eq 0 ]; then
+  echo "$file"
+  exit 0
+fi
+
+mkdir -p "${file%/*}"
+# Start on a line of its own when the file doesn't end with one.
+[ -s "$file" ] && [ -n "$(tail -c 1 "$file")" ] && printf '\n' >> "$file"
+printf '%s\n' "$*" >> "$file"
