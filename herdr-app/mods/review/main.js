@@ -1,6 +1,7 @@
 // Review: a read-only look through a repo's git changes, as a tab or beside a terminal.
 // props: {folder?, base?, scope?}. Without a folder (the cmd-shift-r split) it takes the focused
-// terminal's when it starts, and keeps it; the scope, branch and base picked are kept per folder.
+// terminal's when it starts, and keeps it; the scope and base picked are kept per folder, the
+// branch picked only while it's open, so it opens on the checkout.
 // Scopes: Uncommitted, Branch (a branch against its base; the header picks both, the checkout by
 // default; a branch, origin's or local, or a worktree, whose uncommitted edits are included like the
 // checkout's) and Commit (a branch's commits). Left: progress, the
@@ -97,7 +98,7 @@ export default class Review extends View {
     this.origin = this.findOrigin();
     this.scope = this.remembered("scope") ?? props()?.scope;
     this.base = this.remembered("base"); // picked in the header; else props.base or the default
-    this.target = this.remembered("branch") || null; // picked in the header (a ref or WORKTREE + folder); else the checkout
+    this.target = null; // picked in the header (a ref or WORKTREE + folder); else the checkout
     this.refresh(cx);
     cx.timer.every(10000, (cx) => this.refresh(cx));
   }
@@ -439,7 +440,6 @@ export default class Review extends View {
     if (target === this.target) return;
     this.target = target;
     this.commit = null;
-    this.remember("branch", target ?? "");
     this.reset(cx);
   }
 
