@@ -28,22 +28,54 @@ export function hash(text) {
   return (h >>> 0).toString(16).padStart(8, "0");
 }
 
-// Where HEAD is, the base it's compared with, and how far apart. The base: picked (as is), else
-// the default (fallback): the freshest of want or origin/HEAD's branch.
-export async function info(git, want, picked) {
+// A pick in the branch menus: a ref ("main", "origin/x"), or a worktree as WORKTREE + its folder.
+export const WORKTREE = "worktree:";
+const folderName = (path) => path.split("/").filter(Boolean).at(-1) ?? path;
+const treeName = (path, branch, head) => `${folderName(path)} · ${branch ?? `detached ${head.slice(0, 7)}`}`;
+
+// What's reviewed and against what, each a pick resolved to {key, rev, name, branch, dir}: the
+// pick, its commit, what the header shows, its local branch (for stale) and, for a worktree,
+// its folder. The branch: picked, else the checkout; it's live, its uncommitted edits
+// included, when it's the checkout or a worktree (dir: where they are). The base: picked, else
+// the default (fallback): the freshest of want or origin/HEAD's branch. stale: how far each
+// local branch is behind its origin copy, as {branch, n}.
+export async function info(git, root, want, pickedBase, pickedBranch) {
   const head = await quiet(git, ["rev-parse", "--verify", "-q", "HEAD"]);
   const branch = await quiet(git, ["symbolic-ref", "--short", "-q", "HEAD"]);
   const named = want || (await defaultBase(git));
   const fallback = named && (await freshest(git, named));
-  const kept = picked && (await quiet(git, ["rev-parse", "--verify", "-q", `${picked}^{commit}`])) ? picked : null;
-  const base = kept ?? fallback;
+  const base = (await resolve(git, pickedBase)) ?? (fallback && { key: fallback, rev: fallback, name: fallback, branch: fallback, dir: null });
+  const own = head && { key: null, rev: "HEAD", name: branch ?? head.slice(0, 7), branch, dir: root };
+  const picked = pickedBranch !== `${WORKTREE}${root}` && pickedBranch !== branch && (await resolve(git, pickedBranch));
+  const target = picked || own;
   let mergeBase = null, ahead = 0, behind = 0;
-  if (head && base) {
-    mergeBase = await quiet(git, ["merge-base", base, "HEAD"]);
-    const counts = await quiet(git, ["rev-list", "--left-right", "--count", `${base}...HEAD`]);
+  if (target && base) {
+    mergeBase = await quiet(git, ["merge-base", base.rev, target.rev]);
+    const counts = await quiet(git, ["rev-list", "--left-right", "--count", `${base.rev}...${target.rev}`]);
     if (counts) [behind, ahead] = counts.split(/\s+/).map(Number);
   }
-  return { head, branch, base, fallback, mergeBase, ahead, behind };
+  const stale = { base: await behindOrigin(git, base?.branch), target: await behindOrigin(git, target?.branch) };
+  return { head, branch, base, target, fallback, mergeBase, ahead, behind, stale, live: Boolean(target?.dir) };
+}
+
+async function resolve(git, pick) {
+  if (!pick) return null;
+  if (!pick.startsWith(WORKTREE)) {
+    const ok = await quiet(git, ["rev-parse", "--verify", "-q", `${pick}^{commit}`]);
+    return ok && { key: pick, rev: pick, name: pick, branch: pick, dir: null };
+  }
+  // Read in the worktree itself: its HEAD moves as work is committed there.
+  const dir = pick.slice(WORKTREE.length);
+  const there = (args) => git(["-C", dir, ...args]);
+  const head = await quiet(there, ["rev-parse", "--verify", "-q", "HEAD"]);
+  const branch = head && (await quiet(there, ["symbolic-ref", "--short", "-q", "HEAD"]));
+  return head && { key: pick, rev: head, name: treeName(dir, branch, head), branch: branch || null, dir };
+}
+
+// Commits origin/<name> has that the local branch <name> lacks, as {branch, n}; null when none or either is missing.
+async function behindOrigin(git, name) {
+  const n = name ? Number(await quiet(git, ["rev-list", "--count", `refs/heads/${name}..refs/remotes/origin/${name}`])) || 0 : 0;
+  return n ? { branch: name, n } : null;
 }
 
 // origin/HEAD's branch, else main or master.
@@ -64,23 +96,45 @@ async function freshest(git, name) {
   return (await quiet(git, ["rev-parse", "--verify", "-q", `${name}^{commit}`])) ? name : null;
 }
 
-// The base picker's list: every local branch and origin's, last committed to first, as
-// {name, at}; the given ones (the default, the base) on top, the branch under review (skip) left out.
-export async function branches(git, first, skip) {
+// A branch menu's refs: every local branch and origin's, last committed to first, as {key, name, at}.
+export async function branches(git) {
   const text = (await quiet(git, ["for-each-ref", "--sort=-committerdate", "--format=%(refname)%09%(committerdate:unix)", "refs/heads", "refs/remotes/origin"])) ?? "";
-  const all = text
+  return text
     .split("\n")
     .filter(Boolean)
     .map((line) => {
       const [ref, at] = line.split("\t");
-      return { name: ref.replace(/^refs\/(heads|remotes)\//, ""), at: Number(at) || 0 };
+      const name = ref.replace(/^refs\/(heads|remotes)\//, "");
+      return { key: name, name, at: Number(at) || 0 };
     })
-    .filter((b) => b.name !== "origin/HEAD" && b.name !== skip);
-  const top = [...new Set(first.filter(Boolean))].map((name) => all.find((b) => b.name === name) ?? { name, at: 0 });
-  return [...top, ...all.filter((b) => !top.some((t) => t.name === b.name))];
+    .filter((b) => b.name !== "origin/HEAD");
 }
 
-// range: ["<merge-base>..HEAD"] for a branch, ["-n", "30", "HEAD"] for recent ones. At most CAP.commits.
+// A branch menu's worktrees, as {key, name, at, tree: true}: "folder · branch", or "· detached <sha>".
+// Slow in a repo with many (git stats each), so it's read only when a menu opens.
+export async function worktrees(git) {
+  const text = (await quiet(git, ["worktree", "list", "--porcelain"])) ?? "";
+  const trees = text
+    .split("\n\n")
+    .map((block) => Object.fromEntries(block.split("\n").map((l) => [l.split(" ")[0], l.slice(l.indexOf(" ") + 1)])))
+    .filter((w) => w.worktree && w.HEAD && !("bare" in w) && !("prunable" in w));
+  const times = new Map();
+  if (trees.length) {
+    const log = (await quiet(git, ["log", "--no-walk=unsorted", "--ignore-missing", "--format=%H %ct", ...new Set(trees.map((w) => w.HEAD))])) ?? "";
+    for (const line of log.split("\n")) times.set(line.slice(0, 40), Number(line.slice(41)) || 0);
+  }
+  return trees.map((w) => ({ key: `${WORKTREE}${w.worktree}`, name: treeName(w.worktree, w.branch?.replace(/^refs\/heads\//, ""), w.HEAD), at: times.get(w.HEAD) ?? 0, tree: true }));
+}
+
+// The menu: the given picks on top (the checkout, the pick or the default), then the rest newest first, skip left out.
+export function menuList(lists, first, skip) {
+  const all = lists.flat().filter((b) => b.key !== skip).sort((a, b) => b.at - a.at);
+  // A ref not listed (a tag or sha from --base) still shows; a worktree only once the worktrees are read.
+  const top = [...new Set(first.filter(Boolean))].map((key) => all.find((b) => b.key === key) ?? (key.startsWith(WORKTREE) ? null : { key, name: key, at: 0 })).filter(Boolean);
+  return [...top, ...all.filter((b) => !top.includes(b))];
+}
+
+// range: ["<merge-base>..<branch>"] for a branch, ["-n", "30", "<branch>"] for recent ones. At most CAP.commits.
 export async function commits(git, range) {
   const text = (await quiet(git, ["log", "-n", String(CAP.commits), "--format=%H%x1f%h%x1f%s%x1f%at%x1e", ...range])) ?? "";
   return text
@@ -93,17 +147,18 @@ export async function commits(git, range) {
     });
 }
 
-// One view's files, in path order. spec: {sha} for one commit, else {from}: the work tree
-// (and untracked files) against that commit, or against nothing when it's null. Over
+// One view's files, in path order. spec: {sha} for one commit, {from, to} for one commit's
+// tree against another's, else {from}: the work tree (and untracked files) against that
+// commit, or against nothing when it's null. Over
 // CAP.changed lines it returns only the counts, as {big: {files, add, del}}.
 export async function changes(git, read, spec, pause) {
   const [cmd, ...opts] = spec.sha ? ["show", "--format=", "--diff-merges=first-parent"] : ["diff"];
-  const rev = spec.sha ?? spec.from ?? EMPTY_TREE;
+  const revs = spec.sha ? [spec.sha] : [spec.from ?? EMPTY_TREE, ...(spec.to ? [spec.to] : [])];
   const run = async (more) => {
-    const args = [cmd, ...opts, ...more, rev];
+    const args = [cmd, ...opts, ...more, ...revs];
     return out(await git(args), args);
   };
-  const paths = spec.sha ? [] : out(await git(["ls-files", "--others", "--exclude-standard", "-z"]), ["ls-files"]).split("\0").filter(Boolean);
+  const paths = spec.sha || spec.to ? [] : out(await git(["ls-files", "--others", "--exclude-standard", "-z"]), ["ls-files"]).split("\0").filter(Boolean);
   const big = { files: paths.length, add: 0, del: 0 };
   for (const line of (await run(["--numstat", "--no-ext-diff", "--no-textconv", "-M"])).split("\n").filter(Boolean)) {
     const [add, del] = line.split("\t");
