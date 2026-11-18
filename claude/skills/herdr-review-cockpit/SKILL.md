@@ -52,7 +52,7 @@ Another host: ask the owner which CLI to use. If the CLI is missing or not logge
   cockpit-task add --key "pr-$n" --title "PR #$n: $title" --url "$url" --task "Review PR #$n by $author" --source cockpit \
     --author "$author_name" --opened "$created" --branch "$source_branch" --additions "$added" --deletions "$removed" --files "$files" --reviewers "$reviewer_count"
   ```
-  The panel groups the inbox by `--author` and shows the age, branch, size and number of reviewers (on Bitbucket the length of `reviewers` in `twg bb prs get`), so pass what the forge gives; leave out what it doesn't (on Bitbucket, sum `lines_added`, `lines_removed` and the entries of `twg bb prs diffstat <n> -n 1000 -o json`; `get --diff` stops at 100 files). On GitHub that is:
+  The panel groups the inbox by `--author` and shows the age, branch, size and number of reviewers (on Bitbucket the length of `reviewers` in `twg bb prs get`), so pass what the forge gives; leave out what it doesn't (on Bitbucket, sum `lines_added`, `lines_removed` and the entries of `twg bb prs diffstat <n> -n 1000 -o json`; `get --diff` stops at 100 files). `--tag <text>` is optional too: a short label the panel shows as a chip on the row. On GitHub that is:
   ```bash
   me=$(gh api user --jq .login)
   gh pr list --state open --limit 30 --json number,title,url,author,isDraft,headRefName,createdAt,additions,deletions,changedFiles,reviewRequests,latestReviews |
