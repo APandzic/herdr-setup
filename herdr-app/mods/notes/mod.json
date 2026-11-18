@@ -1,0 +1,11 @@
+{
+  "version": "0.1.0",
+  "place": "none",
+  "title": "Notes",
+  "overlay": {
+    "kind": "window",
+    "key": "notes",
+    "width": 460,
+    "height": 420
+  }
+}
