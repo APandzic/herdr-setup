@@ -1,12 +1,13 @@
 // Cockpit Panel: the markdown docs an agent writes for one Herdr tab, read-only.
 // props().dir is that tab's folder, ~/.herdr/docs/<tab-id>/. Each doc in it is a
-// folder with doc.json ({kind, title, created, handled?, tabs: [{id, title, file}]}) and one
+// folder with doc.json ({kind, title, created, handled?, archived_at?, tabs: [{id, title, file}]}) and one
 // .md per tab. A row of docs (when there's more than one), a row of the doc's tabs,
 // then the chosen tab rendered. Rereads when anything under the folder changes. The doc's bar
-// has Remove, which deletes the doc's folder after a second click.
+// has Archive (or Unarchive), and Remove, which deletes the doc's folder after a second click.
 // Opened for a cockpit (props project and cockpit_terminal too), it has two top tabs:
 // Docs, and Inbox (the project's scripts and the tasks they find, inbox.js). Docs counts the docs
-// that need the owner; merged ones are history, never unseen, in a closed Merged group of the list.
+// that need the owner; merged and archived ones are history, never unseen, in closed Merged and
+// Archived groups of the list (archived wins over merged).
 // A doc with decisions.json (cockpit-panel decision) also gets Open questions, answered here with
 // buttons that tell the cockpit (hc send "DECISION <doc> <id>: <answer>") or hand the question to
 // its chat ("DISCUSS <doc> <id>"), and Decision history.
@@ -132,17 +133,19 @@ export default class CockpitPanel extends View {
         created: meta.created ?? "",
         handled: HANDLED[meta.handled?.state] ? meta.handled : null,
         merged: meta.handled?.state === "merged",
+        archived: Boolean(meta.archived_at),
         open: open.length,
         review: meta.review?.repo ? meta.review : null,
         folder,
         tabs,
       });
     }
-    // Active docs first, then merged ones; newest first in each.
-    docs.sort((a, b) => a.merged - b.merged || String(b.created).localeCompare(String(a.created)));
-    // First load: what's there counts as seen, so only later writes get a dot. A merged doc is always seen.
+    // Active docs first, then merged, then archived ones; newest first in each.
+    const group = (d) => (d.archived ? 2 : d.merged ? 1 : 0);
+    docs.sort((a, b) => group(a) - group(b) || String(b.created).localeCompare(String(a.created)));
+    // First load: what's there counts as seen, so only later writes get a dot. A merged or archived doc is always seen.
     if (!this.loaded) for (const d of docs) for (const tab of d.tabs) this.seen[tab.path] ??= tab.text;
-    for (const d of docs) if (d.merged) for (const tab of d.tabs) this.seen[tab.path] = tab.text;
+    for (const d of docs) if (d.merged || d.archived) for (const tab of d.tabs) this.seen[tab.path] = tab.text;
     this.docs = docs;
     this.loaded = true;
   }
@@ -192,6 +195,47 @@ export default class CockpitPanel extends View {
       })
       .on_click((_e, cx) => (this.armed === doc.id ? this.remove(doc, cx) : this.arm(doc, cx)))
       .child(armed ? "Click again to remove" : "Remove");
+  }
+
+  archiveButton(doc, t) {
+    return div()
+      .id(`archive-${doc.id}`)
+      .flex_none()
+      .ml(6)
+      .px(8)
+      .h(20)
+      .flex()
+      .items_center()
+      .rounded(5)
+      .cursor_pointer()
+      .text_size(TEXT.label)
+      .font_medium()
+      .text_color(t.dim)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .tooltip(doc.archived ? "Move this doc back out of Archived" : "Move this doc into Archived, kept but out of the way")
+      .on_click((_e, cx) => this.archive(doc, cx))
+      .child(doc.archived ? "Unarchive" : "Archive");
+  }
+
+  // archived_at in doc.json, beside handled, which stays: an unarchived merged doc goes back to Merged.
+  archive(doc, cx) {
+    const path = `${doc.folder}/doc.json`;
+    cx.spawn(async (cx) => {
+      const raw = await readTextFile(path).catch(() => null);
+      let saved = false;
+      try {
+        const meta = JSON.parse(raw ?? "null");
+        if (doc.archived) delete meta.archived_at;
+        else meta.archived_at = new Date().toISOString();
+        await writeTextFile(path, `${JSON.stringify(meta, null, 2)}\n`, raw);
+        saved = true;
+      } catch {
+        // Gone, mid-write or changed since read: nothing written.
+      }
+      if (!saved) notify({ title: `Couldn't ${doc.archived ? "unarchive" : "archive"} the doc`, body: `${doc.title} is as it was.`, level: "error" });
+      await this.load();
+      cx.notify();
+    });
   }
 
   reviewButton(doc, t) {
@@ -513,7 +557,7 @@ export default class CockpitPanel extends View {
                 .text_color(picked ? t.foreground : t.muted)
                 .child(d.worker || d.id),
             )
-            .when(!d.merged && d.open > 0, (el) => el.child(div().flex_none().text_size(TEXT.badge).font_medium().text_color(t.accent).child(`${d.open} open`)))
+            .when(!d.merged && !d.archived && d.open > 0, (el) => el.child(div().flex_none().text_size(TEXT.badge).font_medium().text_color(t.accent).child(`${d.open} open`)))
             .when(!picked && d.tabs.some(unseen), (el) => el.child(div().flex_none().size(6).rounded(3).bg(t.accent)))
             // Narrow: a dot in the handled tone; wide: the short badge in place of the progress marks.
             .when(Boolean(d.handled) && narrow, (el) =>
@@ -526,28 +570,33 @@ export default class CockpitPanel extends View {
         )
         .when(!narrow, (el) => el.child(div().truncate().text_size(TEXT.label).text_color(t.dim).child(d.title)));
     };
-    // Merged docs under a header that opens and closes them (closed when the panel opens); the doc
-    // shown keeps its row while closed.
-    const merged = this.docs.filter((d) => d.merged);
-    const header = h_flex()
-      .id("doc-merged")
-      .flex_none()
-      .mt(8)
-      .px(8)
-      .py(4)
-      .gap(6)
-      .items_center()
-      .rounded(6)
-      .cursor_pointer()
-      .hover((s) => s.bg(t.hover))
-      .on_click((_e, cx) => {
-        this.showMerged = !this.showMerged;
-        cx.notify();
-      })
-      .child(div().flex_none().w(8).text_size(TEXT.label).text_color(t.dim).child(this.showMerged ? "▾" : "▸"))
-      .child(div().flex_1().min_w(0).truncate().text_size(TEXT.label).font_semibold().text_color(t.muted).child("Merged"))
-      .child(div().flex_none().px(5).rounded(4).border_1().border_color(t.border).text_size(TEXT.badge).text_color(t.muted).child(String(merged.length)));
-    return v_flex()
+    // Merged and archived docs each under a header that opens and closes them (closed when the panel
+    // opens); the doc shown keeps its row while closed.
+    this.expanded ??= {};
+    const group = (el, key, label, docs) => {
+      if (!docs.length) return el;
+      const shown = this.expanded[key];
+      const header = h_flex()
+        .id(`doc-${key}`)
+        .flex_none()
+        .mt(8)
+        .px(8)
+        .py(4)
+        .gap(6)
+        .items_center()
+        .rounded(6)
+        .cursor_pointer()
+        .hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => {
+          this.expanded[key] = !shown;
+          cx.notify();
+        })
+        .child(div().flex_none().w(8).text_size(TEXT.label).text_color(t.dim).child(shown ? "▾" : "▸"))
+        .child(div().flex_1().min_w(0).truncate().text_size(TEXT.label).font_semibold().text_color(t.muted).child(label))
+        .child(div().flex_none().px(5).rounded(4).border_1().border_color(t.border).text_size(TEXT.badge).text_color(t.muted).child(String(docs.length)));
+      return el.child(header).children(docs.filter((d) => shown || d === current).map(row));
+    };
+    const list = v_flex()
       .id("cockpit-panel-list")
       .flex_none()
       .w(narrow ? 110 : 180)
@@ -558,8 +607,9 @@ export default class CockpitPanel extends View {
       .border_r(1)
       .border_color(t.border)
       .overflow_y_scrollbar()
-      .children(this.docs.filter((d) => !d.merged).map(row))
-      .when(merged.length > 0, (el) => el.child(header).children(merged.filter((d) => this.showMerged || d === current).map(row)));
+      .children(this.docs.filter((d) => !d.merged && !d.archived).map(row));
+    group(list, "merged", "Merged", this.docs.filter((d) => d.merged && !d.archived));
+    return group(list, "archived", "Archived", this.docs.filter((d) => d.archived));
   }
 
   renderDocs() {
@@ -590,6 +640,7 @@ export default class CockpitPanel extends View {
         .when(Boolean(doc.review) && doc.handled?.state !== "merged", (el) => el.child(this.reviewButton(doc, t)))
         .when(Boolean(doc.handled), (el) => el.child(this.handledBadge(doc, t)))
         .when(Boolean(doc.kind), (el) => el.child(div().flex_none().ml(6).text_size(TEXT.label).text_color(t.dim).child(doc.kind)))
+        .child(this.archiveButton(doc, t))
         .child(this.removeButton(doc, t)),
     );
 
@@ -636,8 +687,8 @@ export default class CockpitPanel extends View {
     const fresh = this.inbox.newCount();
     // Rendered before counting: it marks the tab on screen as seen.
     const body = this.view === "inbox" ? this.inbox.render() : this.renderDocs();
-    // Docs that need the owner: not merged, with unseen changes or open questions.
-    const waiting = this.docs.filter((d) => !d.merged && (d.open > 0 || d.tabs.some((x) => this.seen[x.path] !== x.text))).length;
+    // Docs that need the owner: not merged or archived, with unseen changes or open questions.
+    const waiting = this.docs.filter((d) => !d.merged && !d.archived && (d.open > 0 || d.tabs.some((x) => this.seen[x.path] !== x.text))).length;
     const top = (id, label, count) =>
       this.pill(`view-${id}`, label, this.view === id, false, (cx) => {
         this.view = id;
