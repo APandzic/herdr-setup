@@ -13,6 +13,8 @@
 #                                                   records the cockpit for cockpit-task to flag new tasks on
 #   cockpit-panel handled <slug> approved|changes-requested|commented|merged|clear [--into <tab-id>]
 #                                                   mark a doc as acted on (the panel shows it in the doc's bar)
+#   cockpit-panel archive <slug> [--undo] [--into <tab-id>]
+#                                                   move a doc into the panel's Archived group, or back out
 #   cockpit-panel decision add <slug> <question> [--option <label>]... [--rec <n>] [--context <text>] [--into <tab-id>]
 #                                                   ask the owner in the doc's Decisions tab; prints its id (D1, D2, ...)
 #   cockpit-panel decision answer <slug> <id> <answer> [--into <tab-id>]
@@ -160,6 +162,32 @@ case "${1:-}" in
       'if $s == "clear" then del(.handled) else .handled = {state: $s, at: $at} end' \
       "$doc/doc.json" > "$doc/doc.json.tmp" && mv "$doc/doc.json.tmp" "$doc/doc.json"
     echo "$slug: ${state}" ;;
+  archive)
+    shift
+    into=${COCKPIT_PANEL_INTO:-} undo=""
+    args=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --into) into=${2:?--into needs a tab id}; shift 2 ;;
+        --undo) undo=1; shift ;;
+        *) args+=("$1"); shift ;;
+      esac
+    done
+    [ ${#args[@]} -eq 1 ] || die "usage: cockpit-panel archive <slug> [--undo] [--into <tab-id>]"
+    slug=${args[0]}
+    if [ -n "$into" ]; then
+      [[ "$into" =~ ^[A-Za-z0-9_-]+$ ]] || die "bad tab id '$into'"
+      DIR="$DOCS/$into"
+    else
+      locate
+    fi
+    doc="$DIR/$slug"
+    [ -f "$doc/doc.json" ] || die "no doc $doc"
+    # Beside handled, which stays: an unarchived merged doc goes back to Merged.
+    jq --arg undo "$undo" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      'if $undo == "" then .archived_at = $at else del(.archived_at) end' \
+      "$doc/doc.json" > "$doc/doc.json.tmp" && mv "$doc/doc.json.tmp" "$doc/doc.json"
+    echo "$slug: ${undo:+un}archived" ;;
   decision)
     shift
     sub=${1:-}; [ $# -gt 0 ] && shift
@@ -208,5 +236,5 @@ case "${1:-}" in
       list) jq '.decisions' "$file" ;;
       *) die "usage: cockpit-panel decision add|answer|list <slug> ..." ;;
     esac ;;
-  *) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
